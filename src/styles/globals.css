@@ -1,0 +1,79 @@
+@import './theme.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    overscroll-behavior: none;
+  }
+
+  /* Keyboard focus stays visible everywhere; pointer focus does not. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-1 ring-offset-background;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full border-2 border-solid border-transparent bg-muted-foreground/30 bg-clip-content;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50 bg-clip-content;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply flex min-h-0 flex-col overflow-hidden border-border bg-card;
+  }
+
+  .panel-header {
+    @apply flex h-9 shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-3
+           text-xs font-semibold uppercase tracking-wide text-muted-foreground;
+  }
+
+  .field-label {
+    @apply text-[11px] font-medium uppercase tracking-wide text-muted-foreground;
+  }
+
+  .data-grid-row {
+    @apply grid items-center gap-2 border-b border-border/60 px-3 py-1.5 text-sm
+           hover:bg-accent/40;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Monaco needs its container to have a resolved height. */
+.monaco-host {
+  position: absolute;
+  inset: 0;
+}
+
+/* Rete renders absolutely positioned nodes into this host. */
+.rete-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}

@@ -1,0 +1,17 @@
+{
+  "name": "Envelop - Web-Based EnergyPlus Editor",
+  "short_name": "Envelop",
+  "description": "Offline, WebAssembly-powered EnergyPlus IDF editor",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

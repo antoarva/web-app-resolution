@@ -1,0 +1,22 @@
+{
+  "targets": {
+    "debug": {
+      "outFile": "../public/engine/envelop.wasm",
+      "textFile": "../public/engine/envelop.wat",
+      "sourceMap": false,
+      "debug": true
+    },
+    "release": {
+      "outFile": "../public/engine/envelop.wasm",
+      "optimizeLevel": 3,
+      "shrinkLevel": 1,
+      "converge": false,
+      "noAssert": false
+    }
+  },
+  "options": {
+    "runtime": "incremental",
+    "exportRuntime": false,
+    "initialMemory": 16
+  }
+}

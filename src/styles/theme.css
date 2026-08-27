@@ -1,0 +1,153 @@
+/**
+ * Design tokens.
+ *
+ * Every colour in the app resolves through these HSL triplets so the light and
+ * dark palettes stay in lockstep and only one block ever needs editing.
+ */
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+
+  --primary: 201 96% 32%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 222 47% 11%;
+
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+
+  --accent: 199 89% 94%;
+  --accent-foreground: 201 96% 24%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 142 71% 36%;
+  --success-foreground: 0 0% 100%;
+
+  --warning: 38 92% 50%;
+  --warning-foreground: 30 60% 15%;
+
+  --info: 217 91% 60%;
+  --info-foreground: 0 0% 100%;
+
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 201 96% 32%;
+
+  --sidebar-background: 210 40% 98%;
+  --sidebar-foreground: 215 25% 27%;
+  --sidebar-border: 214 32% 91%;
+  --sidebar-accent: 199 89% 94%;
+
+  /* Node graph (HVAC schematic) */
+  --node-background: 0 0% 100%;
+  --node-border: 214 32% 88%;
+  --node-selected: 201 96% 32%;
+  --connection-line: 215 20% 65%;
+  --connection-valid: 142 71% 45%;
+  --connection-invalid: 0 72% 51%;
+
+  /* Charts */
+  --chart-1: 201 96% 32%;
+  --chart-2: 14 90% 53%;
+  --chart-3: 142 71% 36%;
+  --chart-4: 262 83% 58%;
+  --chart-5: 38 92% 50%;
+  --chart-6: 190 90% 40%;
+  --chart-grid: 214 32% 91%;
+  --chart-text: 215 16% 47%;
+
+  /* Code editor */
+  --editor-background: 0 0% 100%;
+  --editor-foreground: 222 47% 11%;
+  --editor-line-number: 215 16% 65%;
+  --editor-line-highlight: 210 40% 97%;
+  --editor-selection: 199 89% 88%;
+
+  /* 3D viewport */
+  --viewport-sky: 205 45% 96%;
+  --viewport-ground: 210 20% 88%;
+  --viewport-grid: 214 20% 82%;
+
+  --radius: 0.5rem;
+  --app-height: 100dvh;
+}
+
+[data-theme='dark'] {
+  --background: 222 47% 7%;
+  --foreground: 213 31% 91%;
+
+  --card: 222 40% 10%;
+  --card-foreground: 213 31% 91%;
+
+  --popover: 222 40% 10%;
+  --popover-foreground: 213 31% 91%;
+
+  --primary: 199 89% 56%;
+  --primary-foreground: 222 47% 8%;
+
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 213 31% 91%;
+
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+
+  --accent: 201 60% 20%;
+  --accent-foreground: 199 89% 78%;
+
+  --destructive: 0 63% 50%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 142 61% 45%;
+  --success-foreground: 222 47% 8%;
+
+  --warning: 38 92% 55%;
+  --warning-foreground: 30 60% 12%;
+
+  --info: 217 91% 65%;
+  --info-foreground: 222 47% 8%;
+
+  --border: 217 33% 20%;
+  --input: 217 33% 20%;
+  --ring: 199 89% 56%;
+
+  --sidebar-background: 222 45% 9%;
+  --sidebar-foreground: 213 25% 80%;
+  --sidebar-border: 217 33% 18%;
+  --sidebar-accent: 201 60% 18%;
+
+  --node-background: 222 40% 13%;
+  --node-border: 217 33% 24%;
+  --node-selected: 199 89% 56%;
+  --connection-line: 215 20% 45%;
+  --connection-valid: 142 61% 45%;
+  --connection-invalid: 0 63% 50%;
+
+  --chart-1: 199 89% 56%;
+  --chart-2: 14 90% 60%;
+  --chart-3: 142 61% 50%;
+  --chart-4: 262 83% 70%;
+  --chart-5: 38 92% 60%;
+  --chart-6: 190 85% 55%;
+  --chart-grid: 217 33% 20%;
+  --chart-text: 215 20% 65%;
+
+  --editor-background: 222 47% 8%;
+  --editor-foreground: 213 31% 91%;
+  --editor-line-number: 215 20% 45%;
+  --editor-line-highlight: 217 33% 13%;
+  --editor-selection: 201 60% 25%;
+
+  --viewport-sky: 222 45% 11%;
+  --viewport-ground: 217 33% 15%;
+  --viewport-grid: 217 33% 22%;
+}
