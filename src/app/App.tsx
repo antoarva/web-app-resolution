@@ -7,6 +7,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { useUiStore, type ViewId } from '@/store/ui-store';
 import { useModelStore } from '@/store/model-store';
 import { useSimulationStore } from '@/store/simulation-store';
+import { usePlanStore } from '@/store/plan-store';
 import { DEFAULT_TEMPLATE_ID } from '@/core/templates/buildings';
 import { requestPersistentStorage } from '@/lib/persistence';
 import { NAV_ITEMS } from './navigation';
@@ -23,6 +24,10 @@ const WeatherView = lazy(() => import('@/features/weather/WeatherView').then((m)
 const SimulationView = lazy(() => import('@/features/simulation/SimulationView').then((m) => ({ default: m.SimulationView })));
 const ResultsView = lazy(() => import('@/features/results/ResultsView').then((m) => ({ default: m.ResultsView })));
 const DocsView = lazy(() => import('@/features/docs/DocsView').then((m) => ({ default: m.DocsView })));
+
+// The plan importer is a full-screen overlay rather than a view, so it is
+// mounted beside the router and only fetched once someone opens it.
+const PlanImportDialog = lazy(() => import('@/features/geometry/plan-import/PlanImportDialog').then((m) => ({ default: m.PlanImportDialog })));
 
 const VIEWS: Record<ViewId, React.ComponentType> = {
   dashboard: DashboardView,
@@ -46,6 +51,7 @@ export function App() {
 
   const source = useModelStore((state) => state.source);
   const loadTemplate = useModelStore((state) => state.loadTemplate);
+  const planImportOpen = usePlanStore((state) => state.open);
 
   // Boot: restore preferences, warm the engine, seed a model, keep data around.
   useEffect(() => {
@@ -62,6 +68,8 @@ export function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // The importer owns the keyboard while it is up.
+      if (usePlanStore.getState().open) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable
         || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
@@ -92,6 +100,12 @@ export function App() {
         </main>
         <StatusBar />
       </div>
+
+      {planImportOpen && (
+        <Suspense fallback={null}>
+          <PlanImportDialog />
+        </Suspense>
+      )}
     </div>
   );
 }

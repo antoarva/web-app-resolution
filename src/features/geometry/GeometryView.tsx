@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import * as Icons from 'lucide-react';
 import { useModelStore } from '@/store/model-store';
 import { useUiStore } from '@/store/ui-store';
+import { usePlanStore } from '@/store/plan-store';
 import {
   buildSurfaceGroup, buildGrid, buildLighting, frameCamera,
   LIGHT_COLORS, DARK_COLORS, type ColorMode,
@@ -24,6 +25,8 @@ export function GeometryView() {
   const building = useModelStore((state) => state.building);
   const selection = useModelStore((state) => state.selection);
   const select = useModelStore((state) => state.select);
+
+  const openPlanImport = usePlanStore((state) => state.setOpen);
 
   const dark = useUiStore((state) => state.resolvedTheme === 'dark');
   const showGrid = useUiStore((state) => state.showGrid);
@@ -234,7 +237,13 @@ export function GeometryView() {
       <EmptyState
         icon={<Icons.Box className="h-10 w-10" />}
         title="No geometry to show"
-        description="This model has no zones with surfaces yet. Load a template from the Overview, or open an existing IDF file."
+        description="This model has no zones with surfaces yet. Load a template from the Overview, trace one from your floor plan images, or open an existing IDF file."
+        action={(
+          <Button variant="primary" size="md" onClick={() => openPlanImport(true)}>
+            <Icons.Layers2 className="h-4 w-4" aria-hidden />
+            Trace from floor images
+          </Button>
+        )}
       />
     );
   }
@@ -271,6 +280,10 @@ export function GeometryView() {
           </div>
 
           <div className="pointer-events-auto flex items-center gap-1.5">
+            <Button variant="outline" size="md" onClick={() => openPlanImport(true)} title="Build geometry by tracing one plan image per floor">
+              <Icons.Layers2 className="h-4 w-4" aria-hidden />
+              From images
+            </Button>
             <Button variant="outline" size="icon" onClick={resetCamera} title="Reset view">
               <Icons.Maximize className="h-4 w-4" aria-hidden />
             </Button>

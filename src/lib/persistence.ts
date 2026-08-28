@@ -8,6 +8,7 @@
  */
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
+import type { PlanSpec, PlanZone, Calibration, ImageSource } from '@/core/plan/types';
 
 export interface StoredProject {
   id: string;
@@ -19,6 +20,75 @@ export interface StoredProject {
   updatedAt: number;
   /** Byte length of `source`, kept so the project list avoids re-measuring. */
   size: number;
+}
+
+/**
+ * The last plan traced from images, kept whole so its dimensions stay editable
+ * after a reload. Only one is held: the importer is a workbench for the current
+ * model, not a library.
+ */
+export interface StoredPlan {
+  spec: PlanSpec;
+  updatedAt: number;
+}
+
+/** The single-image record written before plans became a stack of levels. */
+interface LegacyStoredPlan {
+  image: ImageSource;
+  calibration: Calibration | null;
+  updatedAt: number;
+  spec: {
+    name: string;
+    locationId: string;
+    program: PlanSpec['program'];
+    storeys: number;
+    storeyHeight: number;
+    northAxis: number;
+    windowToWallRatio: number;
+    metresPerPixelX: number;
+    metresPerPixelY: number;
+    lockAspect: boolean;
+    zones: (PlanZone & { storeyOverride?: number | null; heightOverride?: number | null })[];
+  };
+}
+
+function isLegacy(record: StoredPlan | LegacyStoredPlan): record is LegacyStoredPlan {
+  return Array.isArray((record as LegacyStoredPlan).spec?.zones);
+}
+
+/**
+ * Folds a one-image plan into the level stack. The old `storeys` count becomes
+ * a single level that repeats, which is exactly what it used to mean.
+ */
+function migratePlan(record: LegacyStoredPlan): StoredPlan {
+  const old = record.spec;
+  return {
+    updatedAt: record.updatedAt,
+    spec: {
+      name: old.name,
+      locationId: old.locationId,
+      program: old.program,
+      storeyHeight: old.storeyHeight,
+      northAxis: old.northAxis,
+      windowToWallRatio: old.windowToWallRatio,
+      lockAspect: old.lockAspect,
+      levels: [{
+        id: 'level_migrated',
+        name: 'Level 1',
+        image: record.image,
+        zones: old.zones.map(({ id, name, points, windowToWallRatio, hue }) => ({
+          id, name, points, windowToWallRatio, hue,
+        })),
+        metresPerPixelX: old.metresPerPixelX,
+        metresPerPixelY: old.metresPerPixelY,
+        offsetX: 0,
+        offsetY: 0,
+        heightOverride: null,
+        repeat: Math.max(1, Math.round(old.storeys)),
+        calibration: record.calibration,
+      }],
+    },
+  };
 }
 
 export interface StoredPreferences {
@@ -40,11 +110,16 @@ interface EnvelopSchema extends DBSchema {
     key: string;
     value: StoredPreferences;
   };
+  plans: {
+    key: string;
+    value: StoredPlan | LegacyStoredPlan;
+  };
 }
 
 const DB_NAME = 'envelop';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const PREFERENCES_KEY = 'singleton';
+const PLAN_KEY = 'current';
 
 export const DEFAULT_PREFERENCES: StoredPreferences = {
   theme: 'system',
@@ -59,10 +134,17 @@ let databasePromise: Promise<IDBPDatabase<EnvelopSchema>> | null = null;
 function database(): Promise<IDBPDatabase<EnvelopSchema>> {
   if (!databasePromise) {
     databasePromise = openDB<EnvelopSchema>(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        const projects = db.createObjectStore('projects', { keyPath: 'id' });
-        projects.createIndex('by-updated', 'updatedAt');
-        db.createObjectStore('preferences');
+      upgrade(db, oldVersion) {
+        // Each step runs for anyone arriving from an older schema, so the
+        // clauses stay separate rather than assuming an empty database.
+        if (oldVersion < 1) {
+          const projects = db.createObjectStore('projects', { keyPath: 'id' });
+          projects.createIndex('by-updated', 'updatedAt');
+          db.createObjectStore('preferences');
+        }
+        if (oldVersion < 2) {
+          db.createObjectStore('plans');
+        }
       },
     });
   }
@@ -117,6 +199,25 @@ export async function loadPreferences(): Promise<StoredPreferences> {
 
 export async function savePreferences(preferences: StoredPreferences): Promise<void> {
   await withDatabase((db) => db.put('preferences', preferences, PREFERENCES_KEY).then(() => undefined), undefined);
+}
+
+export async function loadPlan(): Promise<StoredPlan | undefined> {
+  return withDatabase(async (db) => {
+    const record = await db.get('plans', PLAN_KEY);
+    if (!record) return undefined;
+    return isLegacy(record) ? migratePlan(record) : record;
+  }, undefined);
+}
+
+export async function savePlan(plan: StoredPlan): Promise<void> {
+  await withDatabase(
+    (db) => db.put('plans', { ...plan, updatedAt: Date.now() }, PLAN_KEY).then(() => undefined),
+    undefined,
+  );
+}
+
+export async function clearPlan(): Promise<void> {
+  await withDatabase((db) => db.delete('plans', PLAN_KEY), undefined);
 }
 
 /** Rough usage figure for the storage panel; not all browsers report it. */

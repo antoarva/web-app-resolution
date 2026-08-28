@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { useModelStore } from '@/store/model-store';
 import { useUiStore } from '@/store/ui-store';
+import { usePlanStore } from '@/store/plan-store';
 import { useSimulationStore, annualTotals } from '@/store/simulation-store';
 import { TEMPLATES } from '@/core/templates/buildings';
 import { CLIMATE_LOCATIONS, findLocation } from '@/core/model/climate';
@@ -21,6 +22,7 @@ export function DashboardView() {
   const loadTemplate = useModelStore((state) => state.loadTemplate);
   const loadProject = useModelStore((state) => state.loadProject);
   const setView = useUiStore((state) => state.setView);
+  const openPlanImport = usePlanStore((state) => state.setOpen);
   const result = useSimulationStore((state) => state.result);
 
   const [projects, setProjects] = useState<StoredProject[]>([]);
@@ -151,6 +153,34 @@ export function DashboardView() {
                 </div>
               </button>
             ))}
+
+            {/* The templates are fixed shapes; this one takes its shape from a
+                drawing you already have. */}
+            <button
+              type="button"
+              onClick={() => openPlanImport(true)}
+              className="group rounded-lg border border-dashed border-primary/50 bg-primary/[0.04] p-4 text-left transition-colors hover:border-primary hover:bg-accent/40"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="rounded-md bg-primary/10 p-1.5 text-primary">
+                  <Icons.Layers2 className="h-4 w-4" aria-hidden />
+                </div>
+                <Icons.ArrowRight
+                  className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                  aria-hidden
+                />
+              </div>
+              <h3 className="mt-2.5 text-sm font-medium">From floor images</h3>
+              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                Drop one plan image per floor. Each is traced, scaled and stacked into 3D
+                geometry you can resize afterwards.
+              </p>
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                <Badge tone="primary">Your plans</Badge>
+                <Badge tone="neutral">Any shape</Badge>
+                <Badge tone="neutral">Multi-storey</Badge>
+              </div>
+            </button>
           </div>
         </section>
 

@@ -23,7 +23,7 @@ export interface TemplateDefinition {
   build(locationId: string): string;
 }
 
-interface ZoneSpec {
+export interface ZoneSpec {
   name: string;
   footprint: Point2[];
   /** Footprint edge indices that face outdoors; the rest are partitions. */
@@ -33,12 +33,17 @@ interface ZoneSpec {
   windowToWallRatio: number;
   /** Roof, or a ceiling to the storey above. */
   topIsRoof: boolean;
+  /**
+   * Set on an upper storey that overhangs open air, so its floor faces
+   * outdoors instead of the adiabatic default. Ground floors ignore it.
+   */
+  exposedFloor?: boolean;
   lightingWattsPerArea: number;
   equipmentWattsPerArea: number;
   areaPerPerson: number;
 }
 
-interface BuildingSpec {
+export interface BuildingSpec {
   name: string;
   locationId: string;
   zones: ZoneSpec[];
@@ -532,19 +537,25 @@ BuildingSurface:Detailed,
 `);
 
   const onGround = zone.baseZ <= 0.01;
+  const exposed = !onGround && zone.exposedFloor === true;
   const floor: Vertex[] = floorVertices(zone.footprint, zone.baseZ);
+
+  // An exposed soffit keeps the insulated slab build-up but faces the weather.
+  // It is never sun exposed: it points down.
+  const floorConstruction = onGround || exposed ? 'Ground Floor' : 'Interior Floor';
+  const floorBoundary = onGround ? 'Ground' : exposed ? 'Outdoors' : 'Adiabatic';
 
   parts.push(`
 BuildingSurface:Detailed,
   ${zone.name} Floor,              !- Name
   Floor,                           !- Surface Type
-  ${onGround ? 'Ground Floor' : 'Interior Floor'},  !- Construction Name
+  ${floorConstruction},            !- Construction Name
   ${zone.name},                    !- Zone Name
   ,                                !- Space Name
-  ${onGround ? 'Ground' : 'Adiabatic'},  !- Outside Boundary Condition
+  ${floorBoundary},                !- Outside Boundary Condition
   ,                                !- Outside Boundary Condition Object
   NoSun,                           !- Sun Exposure
-  NoWind,                          !- Wind Exposure
+  ${exposed ? 'WindExposed' : 'NoWind'},  !- Wind Exposure
   autocalculate,                   !- View Factor to Ground
   4,                               !- Number of Vertices
   ${floor.map(formatVertex).join(',\n  ')};
@@ -627,7 +638,7 @@ HVACTemplate:Zone:IdealLoadsAirSystem,
 `;
 }
 
-function assemble(spec: BuildingSpec, residential: boolean): string {
+export function assemble(spec: BuildingSpec, residential: boolean): string {
   const parts: string[] = [
     header(spec.name),
     `

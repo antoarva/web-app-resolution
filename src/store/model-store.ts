@@ -47,6 +47,7 @@ interface ModelState {
 
   setSource(source: string, options?: { reparse?: boolean }): Promise<void>;
   loadTemplate(templateId: string, locationId?: string): Promise<void>;
+  loadGenerated(name: string, source: string, locationId: string): Promise<void>;
   loadProject(project: StoredProject): Promise<void>;
   refresh(): Promise<void>;
 
@@ -112,6 +113,23 @@ export const useModelStore = create<ModelState>((set, get) => ({
     set({ busy: true, projectId: newProjectId(), projectName: template.name, locationId: resolvedLocation,
       selection: { objectId: null, zoneName: null, surfaceId: null } });
 
+    const result = await project(source);
+    set({ source, ...result, busy: false, dirty: true });
+  },
+
+  /**
+   * Adopts IDF text produced outside the template list — today, the geometry
+   * traced from an imported image. It starts a new project rather than editing
+   * the open one, because the generated file replaces the model wholesale.
+   */
+  async loadGenerated(name, source, locationId) {
+    set({
+      busy: true,
+      projectId: newProjectId(),
+      projectName: name,
+      locationId,
+      selection: { objectId: null, zoneName: null, surfaceId: null },
+    });
     const result = await project(source);
     set({ source, ...result, busy: false, dirty: true });
   },
