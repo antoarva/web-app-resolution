@@ -49,6 +49,13 @@ function DialogBody() {
 
   const addInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
+  /** Which gap in the stack the file picker is currently filling. */
+  const insertAtRef = useRef<number | undefined>(undefined);
+
+  const pickFloorsAt = (at?: number): void => {
+    insertAtRef.current = at;
+    addInput.current?.click();
+  };
   const [imageOpacity, setImageOpacity] = useState(0.75);
   const [dragOver, setDragOver] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -104,7 +111,7 @@ function DialogBody() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {hasLevels && <LevelRail onAdd={() => addInput.current?.click()} />}
+        {hasLevels && <LevelRail onAddAt={(at) => pickFloorsAt(at)} />}
 
         {/* Canvas */}
         <div
@@ -114,11 +121,11 @@ function DialogBody() {
           onDrop={(event) => {
             event.preventDefault();
             setDragOver(false);
-            void store.addLevelsFromFiles(event.dataTransfer.files);
+            void store.addLevelsFromFiles(event.dataTransfer.files, { at: spec.levels.length });
           }}
         >
           {hasLevels ? <PlanCanvas imageOpacity={imageOpacity} /> : (
-            <DropTarget onPick={() => addInput.current?.click()} active={dragOver} busy={busy} />
+            <DropTarget onPick={() => pickFloorsAt()} active={dragOver} busy={busy} />
           )}
 
           {hasLevels && (
@@ -232,6 +239,21 @@ function DialogBody() {
                       <Icons.Trash2 className="h-3.5 w-3.5 text-destructive" aria-hidden />
                     </Button>
                   </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button size="sm" variant="outline" onClick={() => pickFloorsAt(levelIndex + 1)}>
+                      <Icons.ImagePlus className="h-3.5 w-3.5" aria-hidden />
+                      Floor above
+                    </Button>
+                    <Button size="sm" variant="outline"
+                      onClick={() => store.addEmptyLevel({ at: levelIndex + 1 })}>
+                      <Icons.SquareDashed className="h-3.5 w-3.5" aria-hidden />
+                      Blank above
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    A blank floor borrows this one's image and scale, so you can trace or
+                    copy its zones without importing the drawing twice.
+                  </p>
                 </Section>
 
                 <Section title="Alignment" icon="Crosshair">
@@ -608,7 +630,10 @@ function DialogBody() {
         multiple
         className="hidden"
         onChange={(event) => {
-          if (event.target.files) void store.addLevelsFromFiles(event.target.files);
+          if (event.target.files) {
+            void store.addLevelsFromFiles(event.target.files, { at: insertAtRef.current });
+          }
+          insertAtRef.current = undefined;
           event.target.value = '';
         }}
       />

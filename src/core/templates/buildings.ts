@@ -470,10 +470,26 @@ Zone,
 `);
 
   const exterior = new Set(zone.exteriorEdges);
+
+  // Names are assigned up front because the compass label alone is not unique:
+  // any footprint that turns a corner and comes back — an L, a U, anything
+  // traced from a real plan — faces the same way twice, and two surfaces with
+  // one name is a hard error in EnergyPlus. Rectangles are unaffected, so the
+  // built-in templates keep their plain `Wall N` / `Wall S` names.
+  const usedWallNames = new Set<string>();
+  const wallNames = walls.map((wall, index) => {
+    const base = exterior.has(index)
+      ? `${zone.name} Wall ${orientationName(wall.azimuth)}`
+      : `${zone.name} Wall Int${index + 1}`;
+    let name = base;
+    for (let suffix = 2; usedWallNames.has(name); suffix++) name = `${base} ${suffix}`;
+    usedWallNames.add(name);
+    return name;
+  });
+
   walls.forEach((wall, index) => {
     const isExterior = exterior.has(index);
-    const suffix = isExterior ? orientationName(wall.azimuth) : `Int${index + 1}`;
-    const wallName = `${zone.name} Wall ${suffix}`;
+    const wallName = wallNames[index];
     const construction = isExterior ? 'Exterior Wall' : 'Interior Partition';
     const boundary = isExterior ? 'Outdoors' : 'Adiabatic';
     const sun = isExterior ? 'SunExposed' : 'NoSun';

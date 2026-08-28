@@ -15,7 +15,7 @@
 import { create } from 'zustand';
 import type { Point2 } from '@/core/templates/geometry';
 import {
-  emptyPlan, emptyLevel, newZoneId, findProgram, registerAgainst,
+  emptyPlan, emptyLevel, newZoneId, newLevelId, findProgram, registerAgainst,
   type PlanSpec, type PlanLevel, type PlanZone, type Calibration,
   type ImageSource, type ProgramId,
 } from '@/core/plan/types';
@@ -65,9 +65,14 @@ interface PlanState {
   setOpen(open: boolean): void;
   hydrate(): Promise<void>;
 
-  addLevelsFromFiles(files: FileList | File[]): Promise<void>;
+  /**
+   * Adds one level per image. `at` is the index the first new level takes, so
+   * the stack can grow from anywhere — a basement under the base, a floor
+   * between two others — not only on top.
+   */
+  addLevelsFromFiles(files: FileList | File[], options?: { at?: number }): Promise<void>;
   replaceLevelImage(levelId: string, file: File): Promise<void>;
-  addEmptyLevel(): void;
+  addEmptyLevel(options?: { at?: number }): void;
   duplicateLevel(levelId: string): void;
   removeLevel(levelId: string): void;
   reorderLevel(levelId: string, direction: -1 | 1): void;
@@ -207,7 +212,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     set({ analysis, busy: false });
   },
 
-  async addLevelsFromFiles(files) {
+  async addLevelsFromFiles(files, options) {
     const list = Array.from(files).filter((file) => file.type.startsWith('image/'));
     if (list.length === 0) {
       set({ error: 'No images in that drop. PNG, JPEG, WebP and SVG all work.' });
@@ -215,12 +220,15 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     }
     list.sort(byNaturalName);
 
+    const before = get().spec.levels;
+    const at = clampIndex(options?.at, before.length);
+
     set({ busy: true, error: null, progress: `Reading ${list.length} image${list.length === 1 ? '' : 's'}…` });
     try {
-      let spec = get().spec;
       const analysis = { ...get().analysis };
       const added: PlanLevel[] = [];
       const skipped: string[] = [];
+      let bytes = totalImageBytes(get().spec);
 
       for (let i = 0; i < list.length; i++) {
         const file = list[i];
@@ -232,22 +240,21 @@ export const usePlanStore = create<PlanState>((set, get) => ({
           skipped.push(cause instanceof Error ? cause.message : String(cause));
           continue;
         }
-        if (totalImageBytes(spec) + image.src.length > MAX_TOTAL_IMAGE_BYTES) {
+        if (bytes + image.src.length > MAX_TOTAL_IMAGE_BYTES) {
           skipped.push(`${file.name} would push the plan over the 48 MB storage budget.`);
           continue;
         }
+        bytes += image.src.length;
 
-        // `spec` already grows with each accepted image, so it alone counts the
-        // levels — adding `added.length` here would number them 2, 4, 6.
-        let level = emptyLevel(`Level ${spec.levels.length + 1}`, image);
-        // Register each new floor against the one below, so a stack of exports
-        // of the same drawing lines up without any manual alignment.
-        const reference = added[added.length - 1] ?? spec.levels[spec.levels.length - 1];
+        let level = emptyLevel(`Level ${at + added.length + 1}`, image);
+        // Register each new floor against its neighbour in the stack — the one
+        // it lands on top of, or failing that the one it slides under — so a
+        // set of exports of the same drawing lines up with no manual work.
+        const reference = added[added.length - 1] ?? before[at - 1] ?? before[at];
         if (reference) level = registerAgainst(level, reference);
 
         analysis[level.id] = await loadAnalysisImage(image.src);
         added.push(level);
-        spec = { ...spec, levels: [...spec.levels, level] };
       }
 
       if (added.length === 0) {
@@ -255,19 +262,33 @@ export const usePlanStore = create<PlanState>((set, get) => ({
         return;
       }
 
+      const levels = before.slice();
+      levels.splice(at, 0, ...added);
       set({
-        spec,
+        spec: { ...get().spec, levels: renumberAuto(levels) },
         analysis,
-        activeLevelId: get().activeLevelId ?? added[0].id,
+        // Land on the first floor just added, so it is the one being worked on.
+        activeLevelId: added[0].id,
+        selectedZoneId: null,
         busy: false,
         progress: null,
         error: skipped.length > 0 ? skipped.join(' ') : null,
-        history: [...get().history, get().spec.levels].slice(-UNDO_LIMIT),
+        history: [...get().history, before].slice(-UNDO_LIMIT),
       });
 
-      // Trace what was just imported. This is the "drop the floors in and get a
-      // building" path, so it runs without being asked.
-      await get().autoTraceAll();
+      // Trace only what was just imported. Re-tracing the whole stack here
+      // would silently discard outlines already corrected on other floors.
+      set({ busy: true });
+      const failed = await traceLevels(added.map((level) => level.id));
+      seedScaleIfUntouched();
+      set({
+        busy: false,
+        progress: null,
+        error: failed.length > 0
+          ? `No outline found on ${failed.join(', ')}. Adjust the threshold and detect again.`
+          : get().error,
+      });
+      persist(get());
     } catch (cause) {
       set({ busy: false, progress: null, error: cause instanceof Error ? cause.message : String(cause) });
     }
@@ -294,21 +315,26 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     }
   },
 
-  addEmptyLevel() {
+  addEmptyLevel(options) {
     const { spec } = get();
-    const previous = spec.levels[spec.levels.length - 1];
-    let level = emptyLevel(`Level ${spec.levels.length + 1}`, previous?.image ?? null);
-    if (previous) level = registerAgainst(level, previous);
+    const at = clampIndex(options?.at, spec.levels.length);
+    const reference = spec.levels[at - 1] ?? spec.levels[at];
+
+    let level = emptyLevel(`Level ${at + 1}`, reference?.image ?? null);
+    if (reference) level = registerAgainst(level, reference);
+
+    const levels = spec.levels.slice();
+    levels.splice(at, 0, level);
     set({
       history: [...get().history, spec.levels].slice(-UNDO_LIMIT),
-      spec: { ...spec, levels: [...spec.levels, level] },
+      spec: { ...spec, levels: renumberAuto(levels) },
       activeLevelId: level.id,
       selectedZoneId: null,
+      // The new level borrows its neighbour's raster, so detection still works.
+      analysis: reference && get().analysis[reference.id]
+        ? { ...get().analysis, [level.id]: get().analysis[reference.id] }
+        : get().analysis,
     });
-    // The new level shares the previous level's raster, so detection still works.
-    if (previous && get().analysis[previous.id]) {
-      set({ analysis: { ...get().analysis, [level.id]: get().analysis[previous.id] } });
-    }
     persist(get());
   },
 
@@ -320,8 +346,10 @@ export const usePlanStore = create<PlanState>((set, get) => ({
 
     const copy: PlanLevel = {
       ...source,
-      id: emptyLevel('', null).id,
-      name: `Level ${spec.levels.length + 1}`,
+      id: newLevelId(),
+      // A copy of an auto-named floor is renumbered below; a copy of one the
+      // user named keeps that name so the pair stays recognisable.
+      name: isAutoName(source.name) ? `Level ${index + 2}` : `${source.name} copy`,
       zones: source.zones.map((zone) => ({ ...zone, id: newZoneId() })),
     };
     const levels = spec.levels.slice();
@@ -329,8 +357,9 @@ export const usePlanStore = create<PlanState>((set, get) => ({
 
     set({
       history: [...get().history, spec.levels].slice(-UNDO_LIMIT),
-      spec: { ...spec, levels },
+      spec: { ...spec, levels: renumberAuto(levels) },
       activeLevelId: copy.id,
+      selectedZoneId: null,
       analysis: { ...get().analysis, [copy.id]: get().analysis[source.id] },
     });
     persist(get());
@@ -345,7 +374,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     delete analysis[levelId];
     set({
       history: [...get().history, spec.levels].slice(-UNDO_LIMIT),
-      spec: { ...spec, levels },
+      spec: { ...spec, levels: renumberAuto(levels) },
       analysis,
       activeLevelId: get().activeLevelId === levelId ? levels[0]?.id ?? null : get().activeLevelId,
       selectedZoneId: null,
@@ -363,7 +392,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     [levels[index], levels[target]] = [levels[target], levels[index]];
     set({
       history: [...get().history, spec.levels].slice(-UNDO_LIMIT),
-      spec: { ...spec, levels },
+      spec: { ...spec, levels: renumberAuto(levels) },
     });
     persist(get());
   },
@@ -453,42 +482,15 @@ export const usePlanStore = create<PlanState>((set, get) => ({
 
   async autoTraceAll() {
     const { spec } = get();
-    const levels = spec.levels.filter((level) => get().analysis[level.id]);
-    if (levels.length === 0) return;
+    const ids = spec.levels.filter((level) => get().analysis[level.id]).map((level) => level.id);
+    if (ids.length === 0) return;
 
     set({ busy: true, error: null, history: [...get().history, spec.levels].slice(-UNDO_LIMIT) });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const failed: string[] = [];
     try {
-      for (let i = 0; i < levels.length; i++) {
-        const level = levels[i];
-        set({ progress: `Tracing ${level.name} (${i + 1} of ${levels.length})…` });
-        // Yield between levels so the progress line actually paints.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        const shapes = traceImage(get().analysis[level.id], get().traceOptions);
-        if (shapes.length === 0) {
-          failed.push(level.name);
-          continue;
-        }
-        applyShapes(level.id, shapes);
-      }
-
-      // One scale for the whole stack, seeded only while it is still at the
-      // meaningless default, so re-tracing never undoes a measured scale.
-      const untouched = get().spec.levels.every(
-        (level) => level.metresPerPixelX === 0.05 && level.calibration === null,
-      );
-      if (untouched) {
-        const first = get().spec.levels.find((level) => level.zones.length > 0);
-        if (first) {
-          const box = boundsOfAll(first.zones.map((zone) => zone.points));
-          if (box.width > 0) {
-            set({ spec: scaleToExtents(get().spec, DEFAULT_BUILDING_WIDTH, null) });
-          }
-        }
-      }
-
+      const failed = await traceLevels(ids);
+      seedScaleIfUntouched();
       set({
         busy: false,
         progress: null,
@@ -773,6 +775,75 @@ function patchActiveLevel(update: (level: PlanLevel) => PlanLevel): void {
       levels: spec.levels.map((level) => (level.id === activeLevelId ? update(level) : level)),
     },
   });
+}
+
+/** Keeps an insertion index inside the stack, treating undefined as "on top". */
+function clampIndex(at: number | undefined, length: number): number {
+  if (at === undefined || !Number.isFinite(at)) return length;
+  return Math.max(0, Math.min(length, Math.round(at)));
+}
+
+/** True for a name the importer generated rather than one the user typed. */
+function isAutoName(name: string): boolean {
+  return /^Level \d+$/.test(name.trim());
+}
+
+/**
+ * Renumbers the auto-generated names so they read bottom-up after a floor is
+ * inserted, moved or deleted. Names the user typed are left alone — the point
+ * is to stop `Level 1, Level 4, Level 2` from appearing, not to overwrite a
+ * deliberate "Ground" or "Roof Plant".
+ */
+function renumberAuto(levels: PlanLevel[]): PlanLevel[] {
+  return levels.map((level, index) => (isAutoName(level.name)
+    ? { ...level, name: `Level ${index + 1}` }
+    : level));
+}
+
+/**
+ * Detects outlines on the given levels in order, returning the names of any
+ * that came back empty. Callers scope this to the levels they mean: tracing
+ * every level would discard outlines already corrected elsewhere.
+ */
+async function traceLevels(ids: string[]): Promise<string[]> {
+  const failed: string[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    const state = usePlanStore.getState();
+    const level = state.spec.levels.find((entry) => entry.id === ids[i]);
+    const raster = state.analysis[ids[i]];
+    if (!level || !raster) continue;
+
+    usePlanStore.setState({ progress: `Tracing ${level.name} (${i + 1} of ${ids.length})…` });
+    // Yield between levels so the progress line actually paints.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const shapes = traceImage(raster, state.traceOptions);
+    if (shapes.length === 0) {
+      failed.push(level.name);
+      continue;
+    }
+    applyShapes(ids[i], shapes);
+  }
+  return failed;
+}
+
+/**
+ * Gives the stack a sane first size, but only while every level is still at the
+ * meaningless default scale — so importing a floor into a measured building
+ * never rescales the building.
+ */
+function seedScaleIfUntouched(): void {
+  const { spec } = usePlanStore.getState();
+  const untouched = spec.levels.every(
+    (level) => level.metresPerPixelX === 0.05 && level.calibration === null,
+  );
+  if (!untouched) return;
+
+  const first = spec.levels.find((level) => level.zones.length > 0);
+  if (!first) return;
+  const box = boundsOfAll(first.zones.map((zone) => zone.points));
+  if (box.width <= 0) return;
+  usePlanStore.setState({ spec: scaleToExtents(spec, DEFAULT_BUILDING_WIDTH, null) });
 }
 
 /** Replaces one level's outlines with freshly detected shapes. */
