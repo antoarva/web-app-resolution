@@ -36,6 +36,7 @@ function keyOf(scope: GlazingScope): string {
     case 'building': return 'building';
     case 'side': return `side:${scope.orientation}`;
     case 'zone': return `zone:${scope.zone.toLowerCase()}`;
+    case 'surface': return `surface:${scope.name.toLowerCase()}`;
     default: return `zone-side:${scope.zone.toLowerCase()}:${scope.orientation}`;
   }
 }

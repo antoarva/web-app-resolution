@@ -7,7 +7,7 @@
  * changes from elsewhere.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/primitives';
 import { cn } from '@/lib/utils';
 
@@ -29,12 +29,23 @@ export function NumberField({
 
   const [text, setText] = useState(() => format(value));
   const [editing, setEditing] = useState(false);
+  /**
+   * Enter commits and then blurs, and the blur would commit again. A ref, not
+   * state, because both happen in the same tick: a re-render has not run in
+   * between, so the second handler would still see the old `editing`.
+   */
+  const pending = useRef(false);
 
   useEffect(() => {
     if (!editing) setText(format(value));
   }, [value, editing]);
 
   const commit = (): void => {
+    if (!pending.current) {
+      setEditing(false);
+      return;
+    }
+    pending.current = false;
     setEditing(false);
     const trimmed = text.trim();
     if (trimmed === '') {
@@ -65,6 +76,7 @@ export function NumberField({
         disabled={disabled}
         placeholder={placeholder}
         onChange={(event) => {
+          pending.current = true;
           setEditing(true);
           setText(event.target.value);
         }}
@@ -75,6 +87,7 @@ export function NumberField({
             commit();
             (event.target as HTMLInputElement).blur();
           } else if (event.key === 'Escape') {
+            pending.current = false;
             setEditing(false);
             setText(format(value));
           }

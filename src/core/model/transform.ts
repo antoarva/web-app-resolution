@@ -13,7 +13,7 @@
 
 import {
   type IdfModel, type IdfObject,
-  objectName, numericField, textField, firstOfClass, setField,
+  objectName, numericField, textField, firstOfClass, setField, createObject,
 } from '@/core/idf/types';
 import { getClassSchema } from '@/core/idd/schema';
 import {
@@ -53,7 +53,9 @@ export type GlazingScope =
   | { kind: 'side'; orientation: Orientation }
   | { kind: 'zone'; zone: string }
   /** One zone's walls facing one way: the finest grain the panel offers. */
-  | { kind: 'zone-side'; zone: string; orientation: Orientation };
+  | { kind: 'zone-side'; zone: string; orientation: Orientation }
+  /** A single named wall, for the surface picked in the 3D view. */
+  | { kind: 'surface'; name: string };
 
 /** Glazing measured over one part of the envelope. */
 export interface GlazingGroup {
@@ -131,6 +133,8 @@ function levelsOf(building: BuildingModel): number[] {
 interface ExteriorWall {
   /** Lower-cased, since windows name their host in whatever case they like. */
   name: string;
+  /** As written in the file, for anything the reader sees. */
+  displayName: string;
   zone: string;
   orientation: Orientation;
   /** Gross area: an IDF wall keeps its whole polygon under its windows. */
@@ -161,6 +165,7 @@ function surveyWalls(objects: IdfObject[]): ExteriorWall[] {
 
     byName.set(objectName(object).toLowerCase(), {
       name: objectName(object).toLowerCase(),
+      displayName: objectName(object),
       zone: textField(object, 3, ''),
       orientation: orientationName(azimuthOf(normal)) as Orientation,
       area: polygonArea(vertices),
@@ -202,10 +207,25 @@ function groupOf(scope: GlazingScope, label: string, walls: ExteriorWall[]): Gla
 function wallsInScope(walls: ExteriorWall[], scope: GlazingScope): ExteriorWall[] {
   if (scope.kind === 'building') return walls;
   if (scope.kind === 'side') return walls.filter((wall) => wall.orientation === scope.orientation);
+  if (scope.kind === 'surface') {
+    const name = scope.name.toLowerCase();
+    return walls.filter((wall) => wall.name === name);
+  }
   const zone = scope.zone.toLowerCase();
   if (scope.kind === 'zone') return walls.filter((wall) => wall.zone.toLowerCase() === zone);
   return walls.filter((wall) =>
     wall.zone.toLowerCase() === zone && wall.orientation === scope.orientation);
+}
+
+/**
+ * Glazing over any one scope, or null when the scope names nothing that faces
+ * outdoors — an interior partition, a roof, a zone buried in the middle.
+ */
+export function glazingFor(objects: IdfObject[], scope: GlazingScope): GlazingGroup | null {
+  const walls = wallsInScope(surveyWalls(objects), scope);
+  if (walls.length === 0) return null;
+  const label = scope.kind === 'surface' ? walls[0].displayName : labelOf(scope, walls);
+  return groupOf(scope, label, walls);
 }
 
 /** Zone names in the order their walls first appear, matched case-insensitively. */
@@ -607,6 +627,7 @@ function labelOf(scope: GlazingScope, walls: ExteriorWall[]): string {
   const side = (orientation: Orientation): string => ORIENTATION_LABELS[orientation].toLowerCase();
   if (scope.kind === 'building') return 'This model';
   if (scope.kind === 'side') return `The ${side(scope.orientation)} side`;
+  if (scope.kind === 'surface') return walls[0]?.displayName ?? scope.name;
   const zone = walls[0]?.zone ?? scope.zone;
   if (scope.kind === 'zone') return zone;
   return `The ${side(scope.orientation)} side of ${zone}`;
@@ -617,8 +638,158 @@ function whereOf(scope: GlazingScope, label: string): string {
   const side = (orientation: Orientation): string => ORIENTATION_LABELS[orientation].toLowerCase();
   if (scope.kind === 'building') return '';
   if (scope.kind === 'side') return ` on the ${side(scope.orientation)} side`;
+  if (scope.kind === 'surface') return ` on ${label}`;
   if (scope.kind === 'zone') return ` in ${label}`;
   return ` on the ${side(scope.orientation)} side of ${scope.zone}`;
+}
+
+/** Sill kept under a new opening where the wall leaves room for one. */
+const NEW_WINDOW_SILL = 0.8;
+
+/** Signed area in a plane frame; its sign is which way the ring is wound. */
+function signedArea2(points: [number, number][]): number {
+  let total = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[(i + 1) % points.length];
+    total += x1 * y2 - x2 * y1;
+  }
+  return total / 2;
+}
+
+/**
+ * A centred opening covering `ratio` of a bare wall.
+ *
+ * The ring is wound the same way round as its host, which is what makes the
+ * two normals agree — the window has to look the same way as the wall it sits
+ * in, whatever frame the maths happened to pick.
+ */
+function openingOn(wall: Vec3[], ratio: number): Vec3[] | null {
+  const basis = wallBasis(wall);
+  if (!basis) return null;
+
+  const points = wall.map((vertex) => project(vertex, basis));
+  const minU = Math.min(...points.map((point) => point[0]));
+  const maxU = Math.max(...points.map((point) => point[0]));
+  const minV = Math.min(...points.map((point) => point[1]));
+  const maxV = Math.max(...points.map((point) => point[1]));
+  const spanU = maxU - minU;
+  const spanV = maxV - minV;
+  if (spanU <= 0 || spanV <= 0) return null;
+
+  const jamb = Math.min(JAMB_MARGIN, spanU * 0.2);
+  const reveal = Math.min(JAMB_MARGIN, spanV * 0.2);
+  const maxWidth = spanU - jamb * 2;
+  const maxHeight = spanV - reveal * 2;
+  if (maxWidth < 0.3 || maxHeight < 0.3) return null;
+
+  const target = polygonArea(wall) * ratio;
+  let width = Math.min(maxWidth, Math.sqrt(target * (spanU / spanV)));
+  let height = target / width;
+  if (height > maxHeight) {
+    height = maxHeight;
+    width = Math.min(maxWidth, target / height);
+  }
+  if (width < 0.3 || height < 0.3) return null;
+
+  const centreU = (minU + maxU) / 2;
+  const sill = Math.max(reveal, Math.min(NEW_WINDOW_SILL, spanV - height - reveal));
+  const box: [number, number][] = [
+    [centreU - width / 2, minV + sill],
+    [centreU + width / 2, minV + sill],
+    [centreU + width / 2, minV + sill + height],
+    [centreU - width / 2, minV + sill + height],
+  ];
+  if (Math.sign(signedArea2(box)) !== Math.sign(signedArea2(points))) box.reverse();
+
+  return box.map(([u, v]) => [
+    basis.origin[0] + basis.u[0] * u + basis.v[0] * v,
+    basis.origin[1] + basis.u[1] * u + basis.v[1] * v,
+    basis.origin[2] + basis.u[2] * u + basis.v[2] * v,
+  ] as Vec3);
+}
+
+/** The construction a new opening borrows, taken from the file itself. */
+function windowConstruction(objects: IdfObject[]): string | null {
+  const counts = new Map<string, number>();
+  for (const object of objects) {
+    if (object.className !== FENESTRATION_CLASS) continue;
+    const name = textField(object, 2, '');
+    if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [name, count] of counts) {
+    if (count > bestCount) {
+      best = name;
+      bestCount = count;
+    }
+  }
+  if (best) return best;
+
+  // Nothing glazed anywhere in the file, so fall back on a construction that
+  // reads like glazing rather than inventing materials.
+  for (const object of objects) {
+    if (object.className !== 'Construction') continue;
+    if (/window|glaz/i.test(objectName(object))) return objectName(object);
+  }
+  return null;
+}
+
+/**
+ * Puts a window on walls that have none.
+ *
+ * Scaling cannot grow an opening out of nothing, so a scope that is entirely
+ * unglazed gets one built instead. Only that case: where some walls are already
+ * glazed, the existing spread is what the target is applied to.
+ */
+function addWindows(
+  objects: IdfObject[], walls: ExteriorWall[], ratio: number, construction: string,
+): { objects: IdfObject[]; added: number } {
+  const surfaceStart = vertexStart(SURFACE_CLASS, 11);
+  const wanted = new Map(walls.map((wall) => [wall.name, wall]));
+  const taken = new Set(objects
+    .filter((object) => object.className === FENESTRATION_CLASS)
+    .map((object) => objectName(object).toLowerCase()));
+
+  const next: IdfObject[] = [];
+  let added = 0;
+  for (const object of objects) {
+    next.push(object);
+    if (object.className !== SURFACE_CLASS) continue;
+    const wall = wanted.get(objectName(object).toLowerCase());
+    if (!wall) continue;
+
+    const opening = openingOn(readVertices(object, surfaceStart), ratio);
+    if (!opening) continue;
+
+    let name = `${wall.displayName} Window`;
+    for (let suffix = 2; taken.has(name.toLowerCase()); suffix++) {
+      name = `${wall.displayName} Window ${suffix}`;
+    }
+    taken.add(name.toLowerCase());
+
+    // The opening sits straight after its host, so the file still reads in
+    // the order the walls were written.
+    next.push(createObject(FENESTRATION_CLASS, [
+      name, 'Window', construction, wall.displayName, '', 'autocalculate', '', '1', '4',
+      ...opening.flatMap((vertex) => vertex.map(round)),
+    ]));
+    added += 1;
+  }
+  return { objects: next, added };
+}
+
+/** Drops every window hosted by the given walls. */
+function removeWindows(
+  objects: IdfObject[], walls: ExteriorWall[],
+): { objects: IdfObject[]; removed: number } {
+  const hosts = new Set(walls.map((wall) => wall.name));
+  const next = objects.filter((object) => !(
+    object.className === FENESTRATION_CLASS
+    && hosts.has(textField(object, 3, '').toLowerCase())
+  ));
+  return { objects: next, removed: objects.length - next.length };
 }
 
 /** A scale factor for a target, or 1 when the target is missing or unusable. */
@@ -667,10 +838,45 @@ export function applyGeometryEdit(
 
     const walls = wallsInScope(surveyWalls(objects), change.scope);
     const group = groupOf(change.scope, labelOf(change.scope, walls), walls);
-    if (group.windowCount === 0) {
-      notes.push(`${group.label} has no windows to resize, so its glazing was left alone.`);
+    if (walls.length === 0) {
+      notes.push(`${group.label} has no wall facing outdoors, so its glazing was left alone.`);
       continue;
     }
+
+    if (target <= 0) {
+      // Scaling towards nothing would leave slivers behind; asking for no
+      // glazing means no glazing.
+      if (group.windowCount === 0) continue;
+      const result = removeWindows(objects, walls);
+      objects = result.objects;
+      changed = true;
+      notes.push(
+        `Removed ${result.removed} window${result.removed === 1 ? '' : 's'}`
+        + `${whereOf(change.scope, group.label)}.`,
+      );
+      continue;
+    }
+
+    if (group.windowCount === 0) {
+      // Nothing to scale, so build the glazing instead of refusing.
+      const construction = windowConstruction(objects);
+      if (!construction) {
+        notes.push(
+          `${group.label} has no windows, and the file has no glazing construction `
+          + 'to build one from.',
+        );
+        continue;
+      }
+      const result = addWindows(objects, walls, target, construction);
+      if (result.added === 0) {
+        notes.push(`${group.label} has no wall with room for a window.`);
+        continue;
+      }
+      objects = result.objects;
+      changed = true;
+      continue;
+    }
+
     if (Math.abs(target - group.windowToWallRatio) <= 1e-4) continue;
 
     // Area scales with the square of a length, so the side scale is the root.

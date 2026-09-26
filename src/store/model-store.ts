@@ -72,6 +72,43 @@ interface ModelState {
   save(): Promise<void>;
 }
 
+/**
+ * Carries a selection across a re-parse.
+ *
+ * Every parse hands out fresh object ids, so a selection made before an edit
+ * would be dropped the moment the text is rewritten — click a wall, change its
+ * glazing, and the panel you were working in empties. Names survive a rewrite,
+ * and where a name was the thing that changed, position does.
+ */
+function remapSelection(before: IdfModel, after: IdfModel, selection: Selection): Selection {
+  if (selection.objectId === null && selection.surfaceId === null) return selection;
+
+  const key = (object: IdfObject): string =>
+    `${object.className.toLowerCase()}|${objectName(object).trim().toLowerCase()}`;
+  const previous = new Map(before.objects.map((object) => [object.id, object]));
+  const byKey = new Map(after.objects.map((object) => [key(object), object.id]));
+  const sameShape = before.objects.length === after.objects.length;
+
+  const resolve = (id: string | null): string | null => {
+    if (id === null) return null;
+    const object = previous.get(id);
+    if (!object) return null;
+    const matched = byKey.get(key(object));
+    if (matched !== undefined) return matched;
+    // The name itself may be what was edited, so fall back on position.
+    if (!sameShape) return null;
+    const index = before.objects.indexOf(object);
+    const candidate = after.objects[index];
+    return candidate && candidate.className === object.className ? candidate.id : null;
+  };
+
+  return {
+    ...selection,
+    objectId: resolve(selection.objectId),
+    surfaceId: resolve(selection.surfaceId),
+  };
+}
+
 /** Parses `source` and rebuilds every projection derived from it. */
 async function project(source: string): Promise<{
   model: IdfModel; building: BuildingModel | null; issues: ParseIssue[]; parseTimeMs: number; error: string | null;
@@ -102,12 +139,17 @@ export const useModelStore = create<ModelState>((set, get) => ({
   lastSavedAt: null,
 
   async setSource(source, options) {
+    const before = get().model;
     set({ source, dirty: true });
     if (options?.reparse === false) return;
 
     set({ busy: true });
     const result = await project(source);
-    set({ ...result, busy: false });
+    set({
+      ...result,
+      selection: remapSelection(before, result.model, get().selection),
+      busy: false,
+    });
   },
 
   async loadTemplate(templateId, locationId) {

@@ -1,11 +1,60 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import * as Icons from 'lucide-react';
 import { useModelStore } from '@/store/model-store';
 import { allSurfaces, type ModelSurface } from '@/core/model/building';
 import { computeConstruction } from '@/core/model/constructions';
-import { formatArea, formatNumber } from '@/lib/utils';
+import { glazingFor, type GlazingScope } from '@/core/model/transform';
+import { formatArea, formatNumber, cn } from '@/lib/utils';
 import { Badge, EmptyState } from '@/components/ui/primitives';
+import { NumberField } from '@/components/ui/NumberField';
 import { orientationName } from '@/core/templates/geometry';
+
+/**
+ * Glazing for whatever is selected, edited in place.
+ *
+ * The figure is measured from the model rather than remembered, so it is an
+ * absolute target like every other dimension field: what it shows is what the
+ * walls actually carry, and typing the old number back restores them.
+ */
+function GlazingEditor({ scope, hint, label = 'Glazing' }: {
+  scope: GlazingScope;
+  hint: string;
+  label?: string;
+}) {
+  const model = useModelStore((state) => state.model);
+  const busy = useModelStore((state) => state.busy);
+  const editGeometry = useModelStore((state) => state.editGeometry);
+  const [notes, setNotes] = useState<string[]>([]);
+
+  // Keyed on the scope's shape rather than its identity: the caller builds a
+  // fresh object every render, and re-measuring the model is not free.
+  const key = JSON.stringify(scope);
+  const group = useMemo(() => glazingFor(model.objects, scope), [model, key]);
+  if (!group) return null;
+
+  return (
+    <div className={cn('space-y-1.5', busy && 'pointer-events-none opacity-60')}>
+      <div className="field-label">{label}</div>
+      <NumberField
+        value={Math.round(group.windowToWallRatio * 1000) / 10}
+        onCommit={(value) => {
+          if (value === null) return;
+          void editGeometry({ glazing: [{ scope, ratio: value / 100 }] }).then(setNotes);
+        }}
+        min={0} max={95} step={1} suffix="%"
+      />
+      <p className="text-[11px] text-muted-foreground">{hint}</p>
+      {notes.length > 0 && (
+        <div className="flex gap-1.5 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px]">
+          <Icons.AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-warning" aria-hidden />
+          <div className="space-y-1">
+            {notes.map((note) => <p key={note}>{note}</p>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Read-only detail for the surface picked in the 3D view. */
 export function SurfaceInspector() {
@@ -25,6 +74,34 @@ export function SurfaceInspector() {
     if (!name) return null;
     return building.zones.find((entry) => entry.name === name) ?? null;
   }, [building, surface, zoneName]);
+
+  /**
+   * A wall edits its own glazing; an opening edits the wall it sits in, which
+   * is what someone clicking a window is reaching for.
+   */
+  const glazing = useMemo<{ scope: GlazingScope; hint: string; label: string } | null>(() => {
+    if (!surface) return null;
+    if (surface.category === 'wall' && surface.boundary === 'outdoors') {
+      return {
+        scope: { kind: 'surface', name: surface.name },
+        label: `Glazing on ${orientationName(surface.azimuth)} wall`,
+        hint: 'This wall only. Resizes its windows, or builds one where there is none.',
+      };
+    }
+    if (surface.category === 'window' || surface.category === 'door') {
+      const host = building?.zones
+        .flatMap((entry) => entry.surfaces)
+        .find((wall) => wall.children.some((child) => child.id === surface.id));
+      if (host) {
+        return {
+          scope: { kind: 'surface', name: host.name },
+          label: 'Glazing on host wall',
+          hint: `${host.name} only. Resizes every opening on it.`,
+        };
+      }
+    }
+    return null;
+  }, [surface, building]);
 
   const construction = useMemo(() => {
     if (!surface?.constructionName) return null;
@@ -81,6 +158,8 @@ export function SurfaceInspector() {
           ['Vertices', String(surface.vertices.length)],
           ['Height range', `${formatNumber(surface.minZ, 2)} – ${formatNumber(surface.maxZ, 2)} m`],
         ]} />
+
+        {glazing && <GlazingEditor key={JSON.stringify(glazing.scope)} {...glazing} />}
 
         {construction && (
           <div>
@@ -145,6 +224,19 @@ function ZoneSummary({ zone, compact }: {
           <span>Multiplier {zone.multiplier}</span>
         </div>
       </div>
+      {/* Only when the zone is what is selected. Shown beneath a surface it
+          would be a second field labelled Glazing, one wall wide and one zone
+          wide, with nothing but the hint to tell them apart. */}
+      {!compact && (
+        <div className="mt-2.5">
+          <GlazingEditor
+            key={`zone:${zone.name}`}
+            label="Zone glazing"
+            scope={{ kind: 'zone', zone: zone.name }}
+            hint="Resizes the windows on every outward wall of this zone."
+          />
+        </div>
+      )}
     </div>
   );
 }
