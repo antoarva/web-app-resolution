@@ -11,6 +11,7 @@ import {
 } from './scene';
 import { Button, EmptyState, Toggle } from '@/components/ui/primitives';
 import { SurfaceInspector } from './SurfaceInspector';
+import { GeometrySpecPanel } from './GeometrySpecPanel';
 import { formatArea, cn } from '@/lib/utils';
 
 const COLOR_MODES: { id: ColorMode; label: string }[] = [
@@ -333,12 +334,13 @@ export function GeometryView() {
         )}
       </div>
 
-      <aside className="flex w-72 shrink-0 flex-col border-l border-border bg-card">
+      <aside className="flex w-80 shrink-0 flex-col overflow-y-auto border-l border-border bg-card">
+        <GeometrySpecPanel />
         <div className="panel-header">
           <Icons.SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
           View
         </div>
-        <div className="space-y-3 border-b border-border p-3">
+        <div className="shrink-0 space-y-3 border-b border-border p-3">
           <Toggle checked={showGrid} onChange={setShowGrid} label="Ground grid" />
           <Toggle checked={showEdges} onChange={setShowEdges} label="Surface edges" />
         </div>

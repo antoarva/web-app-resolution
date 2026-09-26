@@ -355,7 +355,9 @@ export async function buildModel(model: IdfModel): Promise<BuildingModel> {
       roofArea,
       volume: volume > 0 ? volume : resolvedFloorArea * (height > 0 ? height : 3),
       ceilingHeight: height,
-      windowToWallRatio: exteriorWallArea > 0 ? windowArea / (exteriorWallArea + windowArea) : 0,
+      // An IDF wall keeps its whole polygon and the window sits on top of it,
+      // so `exteriorWallArea` is already the gross area the ratio is taken of.
+      windowToWallRatio: exteriorWallArea > 0 ? windowArea / exteriorWallArea : 0,
     };
   });
 
@@ -397,8 +399,8 @@ export async function buildModel(model: IdfModel): Promise<BuildingModel> {
     }),
     { floorArea: 0, exteriorWallArea: 0, windowArea: 0, roofArea: 0, volume: 0, zoneCount: 0, surfaceCount: 0, windowToWallRatio: 0 },
   );
-  totals.windowToWallRatio = totals.exteriorWallArea + totals.windowArea > 0
-    ? totals.windowArea / (totals.exteriorWallArea + totals.windowArea)
+  totals.windowToWallRatio = totals.exteriorWallArea > 0
+    ? totals.windowArea / totals.exteriorWallArea
     : 0;
 
   return {

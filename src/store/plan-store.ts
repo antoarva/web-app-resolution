@@ -13,7 +13,7 @@
  */
 
 import { create } from 'zustand';
-import type { Point2 } from '@/core/templates/geometry';
+import type { Orientation, Point2 } from '@/core/templates/geometry';
 import {
   emptyPlan, emptyLevel, newZoneId, newLevelId, findProgram, registerAgainst,
   type PlanSpec, type PlanLevel, type PlanZone, type Calibration,
@@ -95,6 +95,8 @@ interface PlanState {
   cancelDraft(): void;
 
   updateZone(id: string, patch: Partial<PlanZone>): void;
+  /** Glazing for one zone's walls facing one way; null hands the side back. */
+  setZoneSideGlazing(id: string, orientation: Orientation, ratio: number | null): void;
   moveVertex(id: string, index: number, point: Point2): void;
   insertVertex(id: string, index: number, point: Point2): void;
   deleteVertex(id: string, index: number): void;
@@ -543,6 +545,22 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     patchActiveLevel((level) => ({
       ...level,
       zones: level.zones.map((zone) => (zone.id === id ? { ...zone, ...patch } : zone)),
+    }));
+    persist(get());
+  },
+
+  setZoneSideGlazing(id, orientation, ratio) {
+    patchActiveLevel((level) => ({
+      ...level,
+      zones: level.zones.map((zone) => {
+        if (zone.id !== id) return zone;
+        const bySide = { ...zone.windowToWallRatioBySide };
+        // An override is only stored while it differs from inheriting, so a
+        // cleared side leaves no trace in the saved plan.
+        if (ratio === null) delete bySide[orientation];
+        else bySide[orientation] = ratio;
+        return { ...zone, windowToWallRatioBySide: bySide };
+      }),
     }));
     persist(get());
   },

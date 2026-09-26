@@ -7,7 +7,7 @@
  */
 
 import {
-  type Point2, type Vertex, type WallSpec,
+  type Point2, type Vertex, type WallSpec, type Orientation,
   rectangleFootprint, wallsFromFootprint, roofVertices, floorVertices,
   windowOnWall, orientationName, formatVertex,
 } from './geometry';
@@ -31,6 +31,11 @@ export interface ZoneSpec {
   baseZ: number;
   height: number;
   windowToWallRatio: number;
+  /**
+   * Glazing for walls facing one way, overriding the zone's own figure. A side
+   * that is absent here simply follows `windowToWallRatio`.
+   */
+  windowToWallRatioBySide?: Partial<Record<Orientation, number>>;
   /** Roof, or a ceiling to the storey above. */
   topIsRoof: boolean;
   /**
@@ -471,6 +476,10 @@ Zone,
 
   const exterior = new Set(zone.exteriorEdges);
 
+  /** A wall's own glazing: its side's figure when there is one, else the zone's. */
+  const glazingOf = (wall: WallSpec): number =>
+    zone.windowToWallRatioBySide?.[orientationName(wall.azimuth)] ?? zone.windowToWallRatio;
+
   // Names are assigned up front because the compass label alone is not unique:
   // any footprint that turns a corner and comes back — an L, a U, anything
   // traced from a real plan — faces the same way twice, and two surfaces with
@@ -511,8 +520,9 @@ BuildingSurface:Detailed,
   ${wall.vertices.map(formatVertex).join(',\n  ')};
 `);
 
-    if (isExterior && zone.windowToWallRatio > 0) {
-      const opening = windowOnWall(wall, zone.windowToWallRatio);
+    const glazing = glazingOf(wall);
+    if (isExterior && glazing > 0) {
+      const opening = windowOnWall(wall, glazing);
       if (opening) {
         parts.push(`
 FenestrationSurface:Detailed,

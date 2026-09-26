@@ -9,7 +9,7 @@
  * registered to the drawings underneath them.
  */
 
-import type { Point2 } from '@/core/templates/geometry';
+import type { Orientation, Point2 } from '@/core/templates/geometry';
 
 export type ProgramId = 'office' | 'residential' | 'retail' | 'warehouse' | 'school';
 
@@ -64,6 +64,12 @@ export interface PlanZone {
   points: Point2[];
   /** Glazing override, 0-1; null follows the plan. */
   windowToWallRatio: number | null;
+  /**
+   * Glazing for the walls facing one way, 0-1. A side left out follows the
+   * zone, which in turn follows the plan — so an override is only ever stored
+   * where somebody actually set one.
+   */
+  windowToWallRatioBySide?: Partial<Record<Orientation, number>>;
   /** Stable hue for the overlay and the zone list. */
   hue: number;
 }

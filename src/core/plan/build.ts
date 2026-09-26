@@ -12,7 +12,9 @@
  * floor is exposed only where nothing sits below.
  */
 
-import type { Point2 } from '@/core/templates/geometry';
+import {
+  type Orientation, type Point2, ORIENTATIONS, orientationName,
+} from '@/core/templates/geometry';
 import { assemble, type ZoneSpec } from '@/core/templates/buildings';
 import {
   ensureCounterClockwise, boundsOfAll, polygonArea, perimeter, pointInPolygon, bounds, minimumGap,
@@ -44,6 +46,8 @@ export interface WorldZone {
   exteriorEdges: number[];
   area: number;
   windowToWallRatio: number;
+  /** Per-side overrides, already resolved from the zone's own settings. */
+  windowToWallRatioBySide: Partial<Record<Orientation, number>>;
 }
 
 export interface WorldLevel {
@@ -189,10 +193,60 @@ export function worldLevels(spec: PlanSpec): WorldLevel[] {
           exteriorEdges: exteriorEdgesOf(footprint, footprints.filter((_, other) => other !== position)),
           area: polygonArea(footprint),
           windowToWallRatio: zone.windowToWallRatio ?? spec.windowToWallRatio,
+          windowToWallRatioBySide: zone.windowToWallRatioBySide ?? {},
         };
       }),
     };
   });
+}
+
+/**
+ * Compass side an outward-facing edge looks towards.
+ *
+ * This is the same rule the assembler names walls by, so a side listed while
+ * tracing is the same side the geometry view offers once the model is built.
+ */
+function edgeOrientation(footprint: Point2[], index: number): Orientation {
+  const [x1, y1] = footprint[index];
+  const [x2, y2] = footprint[(index + 1) % footprint.length];
+  // Outward normal of a counterclockwise edge points to its right-hand side.
+  let azimuth = (Math.atan2(y2 - y1, -(x2 - x1)) * 180) / Math.PI;
+  if (azimuth < 0) azimuth += 360;
+  return orientationName(azimuth);
+}
+
+export interface ZoneSide {
+  orientation: Orientation;
+  /** Gross wall area facing this way, for one storey of this zone. */
+  wallArea: number;
+  edgeCount: number;
+}
+
+/**
+ * The compass sides a zone's outward walls face. Sides with no outward wall
+ * are left out, so the editor only offers glazing where there is wall to glaze.
+ */
+export function zoneSidesOf(spec: PlanSpec, zoneId: string): ZoneSide[] {
+  for (const entry of worldLevels(spec)) {
+    const world = entry.zones.find((candidate) => candidate.zone.id === zoneId);
+    if (!world) continue;
+
+    const areas = new Map<Orientation, { wallArea: number; edgeCount: number }>();
+    for (const index of world.exteriorEdges) {
+      const [x1, y1] = world.footprint[index];
+      const [x2, y2] = world.footprint[(index + 1) % world.footprint.length];
+      const orientation = edgeOrientation(world.footprint, index);
+      const tally = areas.get(orientation) ?? { wallArea: 0, edgeCount: 0 };
+      tally.wallArea += Math.hypot(x2 - x1, y2 - y1) * entry.height;
+      tally.edgeCount += 1;
+      areas.set(orientation, tally);
+    }
+
+    return ORIENTATIONS
+      .filter((orientation) => areas.has(orientation))
+      .map((orientation) => ({ orientation, ...areas.get(orientation)! }));
+  }
+  return [];
 }
 
 /** IDF names cannot carry the delimiters, and must stay unique. */
@@ -245,6 +299,7 @@ export function planToZoneSpecs(spec: PlanSpec): ZoneSpec[] {
           baseZ,
           height: entry.height,
           windowToWallRatio: zone.exteriorEdges.length > 0 ? zone.windowToWallRatio : 0,
+          windowToWallRatioBySide: zone.windowToWallRatioBySide,
           topIsRoof,
           exposedFloor,
           lightingWattsPerArea: program.lightingWattsPerArea,
@@ -309,15 +364,17 @@ export function planMetrics(spec: PlanSpec): PlanMetrics {
       floorArea += zone.area * entry.repeat;
       zoneCount += entry.repeat;
 
-      let exteriorLength = 0;
+      // Each wall carries its own glazing, so the totals are summed per edge
+      // rather than from one ratio over the whole perimeter.
       for (const index of zone.exteriorEdges) {
         const [x1, y1] = zone.footprint[index];
         const [x2, y2] = zone.footprint[(index + 1) % zone.footprint.length];
-        exteriorLength += Math.hypot(x2 - x1, y2 - y1);
+        const wallArea = Math.hypot(x2 - x1, y2 - y1) * entry.height * entry.repeat;
+        exteriorWallArea += wallArea;
+        glazingArea += wallArea * (
+          zone.windowToWallRatioBySide[edgeOrientation(zone.footprint, index)]
+          ?? zone.windowToWallRatio);
       }
-      const wallArea = exteriorLength * entry.height * entry.repeat;
-      exteriorWallArea += wallArea;
-      glazingArea += wallArea * zone.windowToWallRatio;
 
       // Walls plus a floor and a ceiling for each storey.
       surfaceCount += (zone.footprint.length + 2) * entry.repeat;

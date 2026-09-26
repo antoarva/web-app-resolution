@@ -14,17 +14,20 @@ import { usePlanStore, activeLevel, activeLevelIndex } from '@/store/plan-store'
 import { useModelStore } from '@/store/model-store';
 import { useUiStore } from '@/store/ui-store';
 import { PROGRAMS, levelHeight, type ProgramId } from '@/core/plan/types';
-import { buildPlanIdf, planMetrics, validatePlan, zonePerimeter } from '@/core/plan/build';
+import {
+  buildPlanIdf, planMetrics, validatePlan, zonePerimeter, zoneSidesOf,
+} from '@/core/plan/build';
 import { bounds, polygonArea } from '@/core/plan/polygon';
 import { CLIMATE_LOCATIONS } from '@/core/model/climate';
 import type { TraceStrategy } from '@/core/plan/trace';
+import { ORIENTATION_LABELS } from '@/core/templates/geometry';
 import {
   Button, Select, Input, Badge, Toggle, Field, Separator,
 } from '@/components/ui/primitives';
 import { formatNumber, cn } from '@/lib/utils';
 import { PlanCanvas } from './PlanCanvas';
 import { LevelRail } from './LevelRail';
-import { NumberField } from './NumberField';
+import { NumberField } from '@/components/ui/NumberField';
 
 const STRATEGIES: { id: TraceStrategy; label: string; hint: string }[] = [
   { id: 'outline', label: 'Building outline', hint: 'One footprint around the whole plan.' },
@@ -57,10 +60,17 @@ function DialogBody() {
     addInput.current?.click();
   };
   const [imageOpacity, setImageOpacity] = useState(0.75);
+  const [sidesOpen, setSidesOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const metrics = useMemo(() => planMetrics(spec), [spec]);
+  // Only the open zone's sides are needed, and working them out means walking
+  // the whole plan, so it waits until one is actually open.
+  const zoneSides = useMemo(
+    () => (selectedZoneId ? zoneSidesOf(spec, selectedZoneId) : []),
+    [spec, selectedZoneId],
+  );
   const issues = useMemo(() => validatePlan(spec), [spec]);
   const blocking = issues.filter((issue) => issue.severity === 'error');
   const hasLevels = spec.levels.length > 0;
@@ -437,6 +447,8 @@ function DialogBody() {
                         const box = bounds(zone.points);
                         const area = polygonArea(zone.points)
                           * level.metresPerPixelX * level.metresPerPixelY;
+                        // What a side inherits when it carries no figure of its own.
+                        const zoneGlazing = zone.windowToWallRatio ?? spec.windowToWallRatio;
                         return (
                           <li key={zone.id} className={cn(
                             'rounded-md border transition-colors',
@@ -483,7 +495,28 @@ function DialogBody() {
                                     />
                                   </div>
                                 </Field>
-                                <Field label="Glazing" hint="Blank follows the building setting.">
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="field-label">Glazing</span>
+                                    {zoneSides.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setSidesOpen(!sidesOpen)}
+                                        className={cn(
+                                          'flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors',
+                                          sidesOpen
+                                            ? 'bg-accent text-accent-foreground'
+                                            : 'text-muted-foreground hover:text-foreground',
+                                        )}
+                                      >
+                                        <Icons.ChevronRight
+                                          className={cn('h-3 w-3 transition-transform', sidesOpen && 'rotate-90')}
+                                          aria-hidden
+                                        />
+                                        By side
+                                      </button>
+                                    )}
+                                  </div>
                                   <NumberField
                                     value={zone.windowToWallRatio === null ? null : zone.windowToWallRatio * 100}
                                     onCommit={(value) => store.updateZone(zone.id, {
@@ -492,7 +525,39 @@ function DialogBody() {
                                     min={0} max={95} step={1} suffix="%"
                                     placeholder={String(Math.round(spec.windowToWallRatio * 100))}
                                   />
-                                </Field>
+                                  {sidesOpen && zoneSides.length > 1 && (
+                                    <div className="space-y-1 pl-3.5">
+                                      {zoneSides.map((side) => {
+                                        const override = zone.windowToWallRatioBySide?.[side.orientation];
+                                        return (
+                                          <div key={side.orientation} className="flex items-center gap-2">
+                                            <span
+                                              className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                                              title={`${formatNumber(side.wallArea, 1)} m² of wall per storey`}
+                                            >
+                                              {ORIENTATION_LABELS[side.orientation]}
+                                            </span>
+                                            <NumberField
+                                              value={override === undefined ? null : override * 100}
+                                              onCommit={(value) => store.setZoneSideGlazing(
+                                                zone.id, side.orientation,
+                                                value === null ? null : value / 100,
+                                              )}
+                                              min={0} max={95} step={1} suffix="%"
+                                              placeholder={String(Math.round(zoneGlazing * 100))}
+                                              className="w-24 shrink-0"
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {sidesOpen && zoneSides.length > 1
+                                      ? 'Blank follows this zone.'
+                                      : 'Blank follows the building setting.'}
+                                  </p>
+                                </div>
                                 <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                                   <span>{zone.points.length} corners</span>
                                   <span className="tabular">

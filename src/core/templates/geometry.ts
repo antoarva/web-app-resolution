@@ -77,9 +77,18 @@ export function floorVertices(footprint: Point2[], z: number): Vertex[] {
   return footprint.slice().reverse().map(([x, y]) => [x, y, z] as Vertex);
 }
 
+/** Glass is kept this far below the ceiling where the target leaves room. */
+const HEAD_CLEARANCE = 0.3;
+/** And this much reveal is kept top and bottom even when it does not. */
+const MIN_REVEAL = 0.1;
+
 /**
  * A window centred on a wall, sized to hit `windowToWallRatio` while keeping
  * a sill height and a margin from each jamb.
+ *
+ * The sill and the head clearance give way once the target needs the room: held
+ * fixed, a 0.8 m sill caps a 3 m storey at 63% glazing, so anything asked for
+ * above that would silently come back short of a curtain wall.
  */
 export function windowOnWall(
   wall: WallSpec,
@@ -92,14 +101,21 @@ export function windowOnWall(
   if (targetArea <= 0.1) return null;
 
   const maxWidth = Math.max(0.3, wall.width - jambMargin * 2);
-  const maxHeight = Math.max(0.3, wall.height - sillHeight - 0.3);
+  const preferredHeight = Math.max(0.3, wall.height - sillHeight - HEAD_CLEARANCE);
+  const absoluteHeight = Math.max(0.3, wall.height - MIN_REVEAL * 2);
 
   // Keep the opening proportional to the wall, then clamp to what fits.
   let width = Math.min(maxWidth, Math.sqrt(targetArea * (wall.width / wall.height)));
   let height = targetArea / width;
-  if (height > maxHeight) {
-    height = maxHeight;
+  if (height > preferredHeight) {
+    // Take the full preferred height first and make up the rest along the wall.
+    height = preferredHeight;
     width = Math.min(maxWidth, targetArea / height);
+    if (width >= maxWidth) {
+      // Even the whole wall is not wide enough, so the sill gives way too.
+      width = maxWidth;
+      height = Math.min(absoluteHeight, targetArea / width);
+    }
   }
   if (width < 0.3 || height < 0.3) return null;
 
@@ -110,7 +126,8 @@ export function windowOnWall(
   const endOffset = startOffset + width;
 
   const baseZ = wall.vertices[1][2];
-  const sill = baseZ + sillHeight;
+  // Keep as much sill as the opening leaves, rather than a fixed height.
+  const sill = baseZ + Math.max(MIN_REVEAL, Math.min(sillHeight, wall.height - height - MIN_REVEAL));
   const head = sill + height;
 
   const p1: Point2 = [wall.start[0] + dx * startOffset, wall.start[1] + dy * startOffset];
@@ -124,8 +141,17 @@ export function windowOnWall(
   ];
 }
 
+/** The four compass sides a wall can be grouped under. */
+export type Orientation = 'N' | 'E' | 'S' | 'W';
+
+export const ORIENTATIONS: Orientation[] = ['N', 'E', 'S', 'W'];
+
+export const ORIENTATION_LABELS: Record<Orientation, string> = {
+  N: 'North', E: 'East', S: 'South', W: 'West',
+};
+
 /** Compass label for an azimuth, used in generated object names. */
-export function orientationName(azimuth: number): string {
+export function orientationName(azimuth: number): Orientation {
   const normalised = ((azimuth % 360) + 360) % 360;
   if (normalised >= 315 || normalised < 45) return 'N';
   if (normalised < 135) return 'E';

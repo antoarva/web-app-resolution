@@ -15,6 +15,7 @@ import {
 import { parseIdfText, registerCanonicalClasses } from '@/core/idf/parse';
 import { serializeModel, serializeObject } from '@/core/idf/serialize';
 import { buildModel, type BuildingModel } from '@/core/model/building';
+import { applyGeometryEdit, type GeometryEdit } from '@/core/model/transform';
 import { allClassNames } from '@/core/idd/schema';
 import { findTemplate, DEFAULT_TEMPLATE_ID } from '@/core/templates/buildings';
 import { DEFAULT_LOCATION_ID } from '@/core/model/climate';
@@ -53,6 +54,12 @@ interface ModelState {
 
   select(selection: Partial<Selection>): void;
   clearSelection(): void;
+
+  /**
+   * Rewrites the model's overall dimensions, glazing or orientation. Returns
+   * anything the model would not do exactly as asked, for the caller to show.
+   */
+  editGeometry(edit: GeometryEdit): Promise<string[]>;
 
   updateObjectField(objectId: string, fieldIndex: number, value: string): Promise<void>;
   addObject(className: string, fields?: string[]): Promise<string | null>;
@@ -158,6 +165,17 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   clearSelection() {
     set({ selection: { objectId: null, zoneName: null, surfaceId: null } });
+  },
+
+  async editGeometry(edit) {
+    const { model, building } = get();
+    if (!building) return [];
+
+    const result = applyGeometryEdit(model, building, edit);
+    if (!result.changed) return result.notes;
+
+    await get().setSource(serializeModel({ objects: result.objects }));
+    return result.notes;
   },
 
   async updateObjectField(objectId, fieldIndex, value) {
