@@ -25,6 +25,7 @@ import {
 } from '@/core/plan/trace';
 import {
   scaleToExtents, resizeZone, applyLevelScale, alignLevelTo, moveLevel as offsetLevel,
+  alignZones,
 } from '@/core/plan/build';
 import { boundsOfAll, simplifyRing, orthogonalize } from '@/core/plan/polygon';
 import { loadPlan, savePlan, clearPlan, type StoredPlan } from '@/lib/persistence';
@@ -105,6 +106,8 @@ interface PlanState {
   duplicateZone(id: string): void;
   simplifySelected(): void;
   squareUpSelected(): void;
+  /** Snaps neighbouring outlines onto shared lines, closing gaps and overlaps. */
+  alignZones(scope: 'level' | 'building', tolerance?: number): void;
   copyZonesFromBelow(): void;
   clearZones(): void;
   /** Snapshots the current outlines so a drag can be undone as one step. */
@@ -660,6 +663,34 @@ export const usePlanStore = create<PlanState>((set, get) => ({
     if (points.length < 3) return;
     get().pushHistory();
     get().updateZone(zone.id, { points });
+  },
+
+  alignZones(scope, tolerance) {
+    const { spec, activeLevelId } = get();
+    if (spec.levels.length === 0) return;
+
+    const report = alignZones(
+      spec, scope === 'level' ? activeLevelId ?? undefined : undefined, tolerance,
+    );
+    if (report.moved <= 0) {
+      set({ error: 'The outlines already meet; nothing to align.' });
+      return;
+    }
+
+    get().pushHistory();
+    // Anything that could not be healed is said plainly rather than left for
+    // the person to find in the model.
+    const notes: string[] = [];
+    if (report.skipped.length > 0) {
+      notes.push(`${report.skipped.join(', ')} left as drawn: snapping would have flattened `
+        + `${report.skipped.length === 1 ? 'it' : 'them'}.`);
+    }
+    for (const clash of report.overlaps) {
+      notes.push(`${clash.a} and ${clash.b} still overlap by ${clash.depth.toFixed(2)} m.`);
+    }
+
+    set({ spec: report.spec, error: notes.length > 0 ? notes.join(' ') : null });
+    persist(get());
   },
 
   copyZonesFromBelow() {

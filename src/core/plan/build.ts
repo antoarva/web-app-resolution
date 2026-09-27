@@ -19,6 +19,7 @@ import { assemble, type ZoneSpec } from '@/core/templates/buildings';
 import {
   ensureCounterClockwise, boundsOfAll, polygonArea, perimeter, pointInPolygon, bounds, minimumGap,
 } from './polygon';
+import { healRings, DEFAULT_TOLERANCE } from './heal';
 import {
   findProgram, levelHeight, levelBaseZ, flipHeightOf,
   type PlanSpec, type PlanLevel, type PlanZone,
@@ -559,6 +560,83 @@ export function alignLevelTo(spec: PlanSpec, levelId: string, referenceId: strin
       offsetY: entry.offsetY + (theirs.minY + theirs.maxY) / 2 - (mine.minY + mine.maxY) / 2,
     } : entry)),
   };
+}
+
+export interface AlignReport {
+  spec: PlanSpec;
+  /** The furthest any corner moved, in metres. */
+  moved: number;
+  /** Zones left as drawn, because snapping would have collapsed them. */
+  skipped: string[];
+  /** Zones still lapping over each other, named in pairs. */
+  overlaps: { a: string; b: string; depth: number }[];
+}
+
+/**
+ * Heals the outlines on a level, or on every level, so neighbouring zones share
+ * exact edges.
+ *
+ * Outlines are stored in image pixels, so they are taken out into building
+ * metres to be healed — the tolerance means a distance on the building, not a
+ * number of pixels, which differ from one drawing to the next — and written
+ * back in the same corner order they came in.
+ */
+export function alignZones(
+  spec: PlanSpec, levelId?: string, tolerance = DEFAULT_TOLERANCE,
+): AlignReport {
+  const fallback = spec.levels.find((entry) => entry.image)?.image?.height ?? 0;
+  let moved = 0;
+  const skipped: string[] = [];
+  const overlaps: { a: string; b: string; depth: number }[] = [];
+
+  const levels = spec.levels.map((level) => {
+    if (levelId !== undefined && level.id !== levelId) return level;
+    if (level.zones.length < 2) return level;
+
+    // Deliberately not `levelFootprints`: a ring it had to turn counterclockwise
+    // no longer lists its corners in the order the zone stores them, and it is
+    // the stored corners that have to move.
+    const flip = flipHeightOf(level, fallback);
+    const rings = level.zones.map((zone) => zone.points.map(([x, y]) => [
+      level.offsetX + x * level.metresPerPixelX,
+      level.offsetY + (flip - y) * level.metresPerPixelY,
+    ] as Point2));
+
+    const report = healRings(rings, { tolerance });
+    moved = Math.max(moved, report.moved);
+    for (const index of report.skipped) skipped.push(level.zones[index].name);
+    for (const clash of report.overlaps) {
+      overlaps.push({
+        a: level.zones[clash.a].name, b: level.zones[clash.b].name, depth: clash.depth,
+      });
+    }
+
+    return {
+      ...level,
+      zones: level.zones.map((zone, position) => ({
+        ...zone,
+        points: report.rings[position].map(([x, y]) => [
+          (x - level.offsetX) / level.metresPerPixelX,
+          flip - (y - level.offsetY) / level.metresPerPixelY,
+        ] as Point2),
+      })),
+    };
+  });
+
+  return { spec: { ...spec, levels }, moved, skipped, overlaps };
+}
+
+/** How far apart neighbouring zones still sit, in metres. */
+export function worstZoneGap(spec: PlanSpec, tolerance = DEFAULT_TOLERANCE): number {
+  const fallback = spec.levels.find((entry) => entry.image)?.image?.height ?? 0;
+  let worst = 0;
+  for (const level of spec.levels) {
+    if (level.zones.length < 2) continue;
+    const rings = levelFootprints(level, fallback);
+    // Whatever healing would move is what is out of place today.
+    worst = Math.max(worst, healRings(rings, { tolerance }).moved);
+  }
+  return worst;
 }
 
 /** Nudges a level in the building frame, in metres. */

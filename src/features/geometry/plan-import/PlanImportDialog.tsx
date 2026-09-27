@@ -15,11 +15,12 @@ import { useModelStore } from '@/store/model-store';
 import { useUiStore } from '@/store/ui-store';
 import { PROGRAMS, levelHeight, type ProgramId } from '@/core/plan/types';
 import {
-  buildPlanIdf, planMetrics, validatePlan, zonePerimeter, zoneSidesOf,
+  buildPlanIdf, planMetrics, validatePlan, zonePerimeter, zoneSidesOf, worstZoneGap,
 } from '@/core/plan/build';
 import { bounds, polygonArea } from '@/core/plan/polygon';
 import { CLIMATE_LOCATIONS } from '@/core/model/climate';
 import type { TraceStrategy } from '@/core/plan/trace';
+import { DEFAULT_TOLERANCE } from '@/core/plan/heal';
 import { ORIENTATION_LABELS } from '@/core/templates/geometry';
 import {
   Button, Select, Input, Badge, Toggle, Field, Separator,
@@ -72,6 +73,8 @@ function DialogBody() {
     [spec, selectedZoneId],
   );
   const issues = useMemo(() => validatePlan(spec), [spec]);
+  const [snapTolerance, setSnapTolerance] = useState(DEFAULT_TOLERANCE);
+  const misfit = useMemo(() => worstZoneGap(spec, snapTolerance), [spec, snapTolerance]);
   const blocking = issues.filter((issue) => issue.severity === 'error');
   const hasLevels = spec.levels.length > 0;
 
@@ -432,6 +435,50 @@ function DialogBody() {
                     Replaces the zones on the floors it runs over. Draw them by hand with
                     the pen tool when a plan is too noisy to detect.
                   </p>
+                </Section>
+
+                <Section title="Align" icon="Ruler">
+                  <p className="text-[11px] text-muted-foreground">
+                    Snaps neighbouring outlines onto shared lines: closes the gaps left by a
+                    drawn wall thickness, lifts small overlaps apart, and straightens a wall
+                    that runs through several zones.
+                  </p>
+                  <div className="mt-2 space-y-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button
+                      size="sm" variant="outline" className="flex-1"
+                      disabled={busy || level.zones.length < 2}
+                      onClick={() => store.alignZones('level', snapTolerance)}
+                    >
+                      <Icons.AlignHorizontalDistributeCenter className="h-3.5 w-3.5" aria-hidden />
+                      This floor
+                    </Button>
+                    <Button
+                      size="sm" variant="outline" className="flex-1"
+                      disabled={busy || spec.levels.length < 2}
+                      onClick={() => store.alignZones('building', snapTolerance)}
+                    >
+                      <Icons.Layers className="h-3.5 w-3.5" aria-hidden />
+                      All floors
+                    </Button>
+                  </div>
+                  <Field
+                    label="Snap distance"
+                    hint="Nothing moves further than this. Raise it to the thickness of the
+                      walls in the drawing."
+                  >
+                    <NumberField
+                      value={snapTolerance}
+                      onCommit={(value) => setSnapTolerance(value ?? DEFAULT_TOLERANCE)}
+                      min={0.01} max={2} step={0.05} suffix="m"
+                    />
+                  </Field>
+                  <p className="text-[11px] text-muted-foreground">
+                    {misfit > 0.0005
+                      ? `Corners would move by up to ${formatNumber(misfit, 2)} m.`
+                      : 'Every outline already meets its neighbours at this distance.'}
+                  </p>
+                  </div>
                 </Section>
 
                 <Section title={`Zones on this floor (${level.zones.length})`} icon="LayoutGrid">

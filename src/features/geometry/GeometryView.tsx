@@ -38,6 +38,8 @@ export function GeometryView() {
   const [colorMode, setColorMode] = useState<ColorMode>('surface-type');
   const [hovered, setHovered] = useState<{ name: string; zone: string; area: number } | null>(null);
   const [zoneFilter, setZoneFilter] = useState<string | null>(null);
+  /** Why the 3D viewport could not start, e.g. WebGL disabled in the browser. */
+  const [viewportError, setViewportError] = useState<string | null>(null);
 
   // Long-lived Three.js objects live in refs: they must survive re-renders and
   // be disposed explicitly, which React state cannot express.
@@ -51,12 +53,27 @@ export function GeometryView() {
   /** Extents of the model the camera was last framed on. */
   const framedExtentsRef = useRef<string>('');
 
-  // --- Renderer setup, once per mount ---
+  // The viewport div only exists once there is geometry to show, so setup has
+  // to re-run when it appears rather than only on the first mount.
+  const hasGeometry = !!building && building.zones.length > 0;
+
+  // --- Renderer setup, once per viewport ---
   useEffect(() => {
     const container = mount.current;
     if (!container) return;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    // Without WebGL (hardware acceleration off, GPU blocklisted, too many live
+    // contexts) Three throws here. Catch it so the panels beside the viewport,
+    // which do not need WebGL, stay usable.
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    } catch (error) {
+      console.error('Envelop: 3D viewport unavailable', error);
+      setViewportError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    setViewportError(null);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(renderer.domElement);
@@ -100,7 +117,14 @@ export function GeometryView() {
       if (frameRef.current) cancelAnimationFrame(frameRef.current);
       controls.dispose();
       renderer.dispose();
+      // dispose() leaves the context alive until GC, and browsers cap live
+      // contexts; every remount would otherwise leak one.
+      renderer.forceContextLoss();
       container.removeChild(renderer.domElement);
+      rendererRef.current = undefined;
+      sceneRef.current = undefined;
+      cameraRef.current = undefined;
+      controlsRef.current = undefined;
 
       // These two refs describe the scene and camera created above, so they
       // must not outlive them. StrictMode remounts this effect in development,
@@ -110,7 +134,7 @@ export function GeometryView() {
       contentRef.current = undefined;
       framedExtentsRef.current = '';
     };
-  }, []);
+  }, [hasGeometry]);
 
   // --- Rebuild content when the model or display options change ---
   useEffect(() => {
@@ -168,7 +192,7 @@ export function GeometryView() {
       framedExtentsRef.current = signature;
       controls.update();
     }
-  }, [building, dark, showGrid, showEdges, colorMode, zoneFilter]);
+  }, [building, dark, showGrid, showEdges, colorMode, zoneFilter, hasGeometry]);
 
   // --- Selection highlight ---
   useEffect(() => {
@@ -259,6 +283,20 @@ export function GeometryView() {
           onMouseMove={handleMove}
           onMouseLeave={() => setHovered(null)}
         />
+
+        {viewportError && (
+          <div className="absolute inset-0 flex items-center justify-center p-8">
+            <div className="max-w-sm text-center">
+              <Icons.MonitorX className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden />
+              <h2 className="mt-2 text-sm font-semibold">3D view unavailable</h2>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Your browser could not start WebGL. Turn on hardware acceleration in the
+                browser settings, or restart the browser, then come back to this view.
+                The panel on the right still works.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Floating controls */}
         <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3">
