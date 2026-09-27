@@ -250,6 +250,69 @@ export function zoneSidesOf(spec: PlanSpec, zoneId: string): ZoneSide[] {
   return [];
 }
 
+/**
+ * A converter from one level's image pixels to building-frame metres.
+ *
+ * Built once and reused, because working the shift out means walking every
+ * outline on every floor — too much to redo for each move of a pointer.
+ */
+export function buildingFrameOf(spec: PlanSpec, levelId: string): (point: Point2) => Point2 {
+  const level = spec.levels.find((entry) => entry.id === levelId);
+  if (!level) return (point) => point;
+
+  const fallback = spec.levels.find((entry) => entry.image)?.image?.height ?? 0;
+  const box = boundsOfAll(rawFootprints(spec).flat());
+  const shiftX = Number.isFinite(box.minX) ? box.minX : 0;
+  const shiftY = Number.isFinite(box.minY) ? box.minY : 0;
+  const flip = flipHeightOf(level, fallback);
+
+  return ([x, y]) => [
+    level.offsetX + x * level.metresPerPixelX - shiftX,
+    level.offsetY + (flip - y) * level.metresPerPixelY - shiftY,
+  ];
+}
+
+export interface ZoneCorners {
+  /** The ring as the generated file will hold it: metres, counterclockwise. */
+  points: Point2[];
+  /** Floor and ceiling height of the storey this zone sits on, in metres. */
+  baseZ: number;
+  topZ: number;
+  /** Where the zone's own corners sit within the whole building. */
+  width: number;
+  depth: number;
+  area: number;
+  /** How many identical storeys this level stands for. */
+  repeat: number;
+}
+
+/**
+ * One zone's corners in building coordinates.
+ *
+ * These are the numbers the IDF will carry, not the pixels the outline is drawn
+ * in: the plan is shifted so the building's south-west corner sits at the
+ * origin, and every ring is turned counterclockwise. Somebody checking a
+ * surface against the file, or against a neighbour it should share a wall with,
+ * needs to read the same values the file does.
+ */
+export function zoneCornersOf(spec: PlanSpec, zoneId: string): ZoneCorners | null {
+  for (const entry of worldLevels(spec)) {
+    const world = entry.zones.find((candidate) => candidate.zone.id === zoneId);
+    if (!world) continue;
+    const box = bounds(world.footprint);
+    return {
+      points: world.footprint,
+      baseZ: entry.baseZ,
+      topZ: entry.baseZ + entry.height,
+      width: box.width,
+      depth: box.depth,
+      area: world.area,
+      repeat: entry.repeat,
+    };
+  }
+  return null;
+}
+
 /** IDF names cannot carry the delimiters, and must stay unique. */
 function safeName(raw: string, taken: Set<string>): string {
   const cleaned = raw.replace(/[,;!]/g, ' ').replace(/\s+/g, '_').replace(/^_+|_+$/g, '');

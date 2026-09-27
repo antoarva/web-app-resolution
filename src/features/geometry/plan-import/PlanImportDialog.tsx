@@ -16,6 +16,7 @@ import { useUiStore } from '@/store/ui-store';
 import { PROGRAMS, levelHeight, type ProgramId } from '@/core/plan/types';
 import {
   buildPlanIdf, planMetrics, validatePlan, zonePerimeter, zoneSidesOf, worstZoneGap,
+  zoneCornersOf,
 } from '@/core/plan/build';
 import { bounds, polygonArea } from '@/core/plan/polygon';
 import { CLIMATE_LOCATIONS } from '@/core/model/climate';
@@ -70,6 +71,10 @@ function DialogBody() {
   // the whole plan, so it waits until one is actually open.
   const zoneSides = useMemo(
     () => (selectedZoneId ? zoneSidesOf(spec, selectedZoneId) : []),
+    [spec, selectedZoneId],
+  );
+  const corners = useMemo(
+    () => (selectedZoneId ? zoneCornersOf(spec, selectedZoneId) : null),
     [spec, selectedZoneId],
   );
   const issues = useMemo(() => validatePlan(spec), [spec]);
@@ -605,6 +610,45 @@ function DialogBody() {
                                       : 'Blank follows the building setting.'}
                                   </p>
                                 </div>
+
+                                {corners && (
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-baseline justify-between gap-2">
+                                      <span className="field-label">Coordinates</span>
+                                      <span className="text-[11px] text-muted-foreground tabular">
+                                        z {formatNumber(corners.baseZ, 2)} –{' '}
+                                        {formatNumber(corners.topZ, 2)} m
+                                        {corners.repeat > 1 && ` · ×${corners.repeat}`}
+                                      </span>
+                                    </div>
+                                    <div className="max-h-40 overflow-y-auto rounded-md border border-border">
+                                      <table className="w-full text-[11px] tabular">
+                                        <thead className="sticky top-0 bg-muted/60 text-muted-foreground">
+                                          <tr>
+                                            <th className="px-2 py-1 text-left font-normal">#</th>
+                                            <th className="px-2 py-1 text-right font-normal">X</th>
+                                            <th className="px-2 py-1 text-right font-normal">Y</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {corners.points.map(([x, y], index) => (
+                                            <tr key={`${x},${y},${index}`} className="border-t border-border/60">
+                                              <td className="px-2 py-1 text-muted-foreground">{index + 1}</td>
+                                              <td className="px-2 py-1 text-right">{formatNumber(x, 3)}</td>
+                                              <td className="px-2 py-1 text-right">{formatNumber(y, 3)}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                    <p className="text-[11px] text-muted-foreground">
+                                      Metres in the building frame, the numbers the generated file
+                                      carries. Counterclockwise, as the walls are raised and the
+                                      roof is written; the floor reverses the ring so it faces down.
+                                    </p>
+                                  </div>
+                                )}
+
                                 <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                                   <span>{zone.points.length} corners</span>
                                   <span className="tabular">

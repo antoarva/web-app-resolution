@@ -16,7 +16,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import type { Point2 } from '@/core/templates/geometry';
 import { usePlanStore, activeLevel, activeLevelIndex } from '@/store/plan-store';
 import { centroid, distanceToSegment, pointInPolygon, polygonArea } from '@/core/plan/polygon';
-import { footprintsInLevelPixels } from '@/core/plan/build';
+import { footprintsInLevelPixels, buildingFrameOf } from '@/core/plan/build';
 import { cn } from '@/lib/utils';
 
 /** Screen-space grab radius for vertices and the close-the-ring hotspot. */
@@ -43,6 +43,8 @@ export function PlanCanvas({ imageOpacity }: { imageOpacity: number }) {
   const viewRef = useRef<View>({ zoom: 1, panX: 0, panY: 0 });
   const dragRef = useRef<Drag>(null);
   const pointerRef = useRef<Point2 | null>(null);
+  /** The corner under the pointer, so its coordinate can be read off. */
+  const hoverRef = useRef<{ zoneId: string; index: number } | null>(null);
 
   const spec = usePlanStore((state) => state.spec);
   const level = usePlanStore(activeLevel);
@@ -51,6 +53,11 @@ export function PlanCanvas({ imageOpacity }: { imageOpacity: number }) {
   const draft = usePlanStore((state) => state.draft);
   const selectedZoneId = usePlanStore((state) => state.selectedZoneId);
   const showLevelBelow = usePlanStore((state) => state.showLevelBelow);
+
+  const toBuilding = useMemo(
+    () => (level ? buildingFrameOf(spec, level.id) : null),
+    [spec, level],
+  );
 
   const image = level?.image ?? null;
   const zones = level?.zones ?? [];
@@ -279,8 +286,35 @@ export function PlanCanvas({ imageOpacity }: { imageOpacity: number }) {
       context.fillText(label, (start[0] + end[0]) / 2, (start[1] + end[1]) / 2 - 8);
     }
 
+    // The corner under the pointer, with where it actually is in the building.
+    const hover = hoverRef.current;
+    const hoveredZone = hover ? zones.find((zone) => zone.id === hover.zoneId) : undefined;
+    const corner = hoveredZone?.points[hover?.index ?? -1];
+    if (hover && hoveredZone && corner && toBuilding) {
+      const [x, y] = toScreen(corner);
+      context.beginPath();
+      context.arc(x, y, HANDLE_RADIUS + 2, 0, Math.PI * 2);
+      context.fillStyle = '#ffffff';
+      context.fill();
+      context.lineWidth = 2.5;
+      context.strokeStyle = `hsl(${hoveredZone.hue}, 72%, 40%)`;
+      context.stroke();
+
+      const [bx, by] = toBuilding(corner);
+      const label = `${bx.toFixed(2)}, ${by.toFixed(2)} m`;
+      context.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+      context.textAlign = 'center';
+      context.lineWidth = 3;
+      context.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+      context.fillStyle = 'rgba(15, 23, 42, 0.95)';
+      // Above the handle, unless that would run off the top of the view.
+      const labelY = y - HANDLE_RADIUS - 8 < 14 ? y + HANDLE_RADIUS + 16 : y - HANDLE_RADIUS - 8;
+      context.strokeText(label, x, labelY);
+      context.fillText(label, x, labelY);
+    }
+
     drawScaleBar(context, height, zoom, scaleX);
-  }, [zones, ghost, draft, calibration, selectedZoneId, tool, imageOpacity, scaleX, scaleY, toScreen]);
+  }, [zones, ghost, draft, calibration, selectedZoneId, tool, imageOpacity, scaleX, scaleY, toScreen, toBuilding]);
 
   useEffect(() => {
     paint();
@@ -405,6 +439,12 @@ export function PlanCanvas({ imageOpacity }: { imageOpacity: number }) {
     const store = usePlanStore.getState();
 
     if (!drag) {
+      const over = tool === 'select' ? vertexAt(point) : null;
+      const was = hoverRef.current;
+      if (over?.zoneId !== was?.zoneId || over?.index !== was?.index) {
+        hoverRef.current = over;
+        redraw();
+      }
       if (tool === 'draw' && draft.length > 0) redraw();
       return;
     }
@@ -418,6 +458,9 @@ export function PlanCanvas({ imageOpacity }: { imageOpacity: number }) {
       return;
     }
     if (drag.kind === 'vertex') {
+      // Keep the readout on the corner being moved, so the number changes with
+      // it rather than disappearing the moment it is picked up.
+      hoverRef.current = { zoneId: drag.zoneId, index: drag.index };
       store.moveVertex(drag.zoneId, drag.index, point);
       return;
     }
@@ -529,7 +572,13 @@ export function PlanCanvas({ imageOpacity }: { imageOpacity: number }) {
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerLeave={() => { pointerRef.current = null; }}
+        onPointerLeave={() => {
+          pointerRef.current = null;
+          if (hoverRef.current) {
+            hoverRef.current = null;
+            redraw();
+          }
+        }}
         onWheel={handleWheel}
         onDoubleClick={handleDoubleClick}
         onContextMenu={(event) => event.preventDefault()}
